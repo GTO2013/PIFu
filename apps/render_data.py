@@ -9,10 +9,12 @@ import cv2
 import time
 import math
 import random
-import pyexr
+#import pyexr
 import argparse
 from tqdm import tqdm
 
+import shutil
+import pathlib
 
 def make_rotate(rx, ry, rz):
     sinX = np.sin(rx)
@@ -207,12 +209,16 @@ def render_prt_ortho(out_path, folder_name, subject_name, shs, rndr, rndr_uv, im
         f.close()
 
     # copy obj file
-    cmd = 'cp %s %s' % (mesh_file, os.path.join(out_path, 'GEO', 'OBJ', subject_name))
-    print(cmd)
-    os.system(cmd)
+    shutil.copy(mesh_file, os.path.join(out_path, 'GEO', 'OBJ', subject_name))
+    
 
-    for p in pitch:
-        for y in tqdm(range(0, 360, angl_step)):
+    for y in tqdm(range(0, 181, angl_step)):
+        currentPitch = pitch
+
+        if y == 90:
+            currentPitch = [0, 90]
+            
+        for p in currentPitch:
             R = np.matmul(make_rotate(math.radians(p), 0, 0), make_rotate(0, math.radians(y), 0))
             if up_axis == 2:
                 R = np.matmul(R, make_rotate(math.radians(90),0,0))
@@ -257,8 +263,10 @@ def render_prt_ortho(out_path, folder_name, subject_name, shs, rndr, rndr_uv, im
                     uv_mask = uv_pos[:,:,3]
                     cv2.imwrite(os.path.join(out_path, 'UV_MASK', subject_name, '00.png'),255.0*uv_mask)
 
-                    data = {'default': uv_pos[:,:,:3]} # default is a reserved name
-                    pyexr.write(os.path.join(out_path, 'UV_POS', subject_name, '00.exr'), data) 
+                    #data = {'default': uv_pos[:,:,:3]} # default is a reserved name
+                    cv2.imwrite(os.path.join(out_path, 'UV_POS', subject_name, '00.exr'), uv_pos[:,:,:3])
+                    
+                    #pyexr.write(os.path.join(out_path, 'UV_POS', subject_name, '00.exr'), data) 
 
                     uv_nml = rndr_uv.get_color(2)
                     uv_nml = cv2.cvtColor(uv_nml, cv2.COLOR_RGBA2BGR)
@@ -284,7 +292,5 @@ if __name__ == '__main__':
     rndr = PRTRender(width=args.size, height=args.size, ms_rate=args.ms_rate, egl=args.egl)
     rndr_uv = PRTRender(width=args.size, height=args.size, uv_mode=True, egl=args.egl)
 
-    if args.input[-1] == '/':
-        args.input = args.input[:-1]
-    subject_name = args.input.split('/')[-1][:-4]
-    render_prt_ortho(args.out_dir, args.input, subject_name, shs, rndr, rndr_uv, args.size, 1, 1, pitch=[0])
+    subject_name = pathlib.PurePath(args.input).name 
+    render_prt_ortho(args.out_dir, args.input, subject_name, shs, rndr, rndr_uv, args.size, 90, 1, pitch=[0])

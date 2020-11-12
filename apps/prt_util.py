@@ -5,6 +5,8 @@ import math
 from scipy.special import sph_harm
 import argparse
 from tqdm import tqdm
+import pathlib
+import re
 
 def factratio(N, D):
     if N >= D:
@@ -91,6 +93,9 @@ def computePRT(mesh_path, n, order):
 
     w = 4.0 * math.pi / (n*n)
 
+    if isinstance(mesh, trimesh.Scene):
+        mesh = mesh.dump(True)
+        
     origins = mesh.vertices
     normals = mesh.vertex_normals
     n_v = origins.shape[0]
@@ -123,9 +128,7 @@ def computePRT(mesh_path, n, order):
     return PRT, mesh.faces
 
 def testPRT(dir_path, n=40):
-    if dir_path[-1] == '/':
-        dir_path = dir_path[:-1]
-    sub_name = dir_path.split('/')[-1][:-4]
+    sub_name = pathlib.PurePath(dir_path).name
     obj_path = os.path.join(dir_path, sub_name + '_100k.obj')
     os.makedirs(os.path.join(dir_path, 'bounce'), exist_ok=True)
 
