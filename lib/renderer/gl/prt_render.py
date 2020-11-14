@@ -97,30 +97,31 @@ class PRTRender(CamRender):
             self.vert_buffer[mat_name] = glGenBuffers(1)
         glBindBuffer(GL_ARRAY_BUFFER, self.vert_buffer[mat_name])
         glBufferData(GL_ARRAY_BUFFER, self.vert_data[mat_name], GL_STATIC_DRAW)
+        
+        if False:
+            self.uv_data[mat_name] = uvs[faces_uvs.reshape([-1])]
+            if mat_name not in self.uv_buffer.keys():
+                self.uv_buffer[mat_name] = glGenBuffers(1)
+            glBindBuffer(GL_ARRAY_BUFFER, self.uv_buffer[mat_name])
+            glBufferData(GL_ARRAY_BUFFER, self.uv_data[mat_name], GL_STATIC_DRAW)
 
-        self.uv_data[mat_name] = uvs[faces_uvs.reshape([-1])]
-        if mat_name not in self.uv_buffer.keys():
-            self.uv_buffer[mat_name] = glGenBuffers(1)
-        glBindBuffer(GL_ARRAY_BUFFER, self.uv_buffer[mat_name])
-        glBufferData(GL_ARRAY_BUFFER, self.uv_data[mat_name], GL_STATIC_DRAW)
+            self.norm_data[mat_name] = norms[faces_nml.reshape([-1])]
+            if mat_name not in self.norm_buffer.keys():
+                self.norm_buffer[mat_name] = glGenBuffers(1)
+            glBindBuffer(GL_ARRAY_BUFFER, self.norm_buffer[mat_name])
+            glBufferData(GL_ARRAY_BUFFER, self.norm_data[mat_name], GL_STATIC_DRAW)
 
-        self.norm_data[mat_name] = norms[faces_nml.reshape([-1])]
-        if mat_name not in self.norm_buffer.keys():
-            self.norm_buffer[mat_name] = glGenBuffers(1)
-        glBindBuffer(GL_ARRAY_BUFFER, self.norm_buffer[mat_name])
-        glBufferData(GL_ARRAY_BUFFER, self.norm_data[mat_name], GL_STATIC_DRAW)
+            self.tan_data[mat_name] = tans[faces_nml.reshape([-1])]
+            if mat_name not in self.tan_buffer.keys():
+                self.tan_buffer[mat_name] = glGenBuffers(1)
+            glBindBuffer(GL_ARRAY_BUFFER, self.tan_buffer[mat_name])
+            glBufferData(GL_ARRAY_BUFFER, self.tan_data[mat_name], GL_STATIC_DRAW)
 
-        self.tan_data[mat_name] = tans[faces_nml.reshape([-1])]
-        if mat_name not in self.tan_buffer.keys():
-            self.tan_buffer[mat_name] = glGenBuffers(1)
-        glBindBuffer(GL_ARRAY_BUFFER, self.tan_buffer[mat_name])
-        glBufferData(GL_ARRAY_BUFFER, self.tan_data[mat_name], GL_STATIC_DRAW)
-
-        self.btan_data[mat_name] = bitans[faces_nml.reshape([-1])]
-        if mat_name not in self.btan_buffer.keys():
-            self.btan_buffer[mat_name] = glGenBuffers(1)
-        glBindBuffer(GL_ARRAY_BUFFER, self.btan_buffer[mat_name])
-        glBufferData(GL_ARRAY_BUFFER, self.btan_data[mat_name], GL_STATIC_DRAW)
+            self.btan_data[mat_name] = bitans[faces_nml.reshape([-1])]
+            if mat_name not in self.btan_buffer.keys():
+                self.btan_buffer[mat_name] = glGenBuffers(1)
+            glBindBuffer(GL_ARRAY_BUFFER, self.btan_buffer[mat_name])
+            glBufferData(GL_ARRAY_BUFFER, self.btan_data[mat_name], GL_STATIC_DRAW)
 
         self.prt1_data[mat_name] = prt[faces_prt.reshape([-1])][:,:3]
         self.prt2_data[mat_name] = prt[faces_prt.reshape([-1])][:,3:6]
@@ -200,14 +201,14 @@ class PRTRender(CamRender):
         glBindBuffer(GL_ARRAY_BUFFER, 0)
         for key in self.vert_data:
             glDeleteBuffers(1, [self.vert_buffer[key]])
-            glDeleteBuffers(1, [self.norm_buffer[key]])
-            glDeleteBuffers(1, [self.uv_buffer[key]])
+            #glDeleteBuffers(1, [self.norm_buffer[key]])
+            #glDeleteBuffers(1, [self.uv_buffer[key]])
 
-            glDeleteBuffers(1, [self.tan_buffer[key]])
-            glDeleteBuffers(1, [self.btan_buffer[key]])
-            glDeleteBuffers(1, [self.prt1_buffer[key]])
-            glDeleteBuffers(1, [self.prt2_buffer[key]])
-            glDeleteBuffers(1, [self.prt3_buffer[key]])
+            #glDeleteBuffers(1, [self.tan_buffer[key]])
+            #glDeleteBuffers(1, [self.btan_buffer[key]])
+            #glDeleteBuffers(1, [self.prt1_buffer[key]])
+            #glDeleteBuffers(1, [self.prt2_buffer[key]])
+            #glDeleteBuffers(1, [self.prt3_buffer[key]])
 
             glDeleteBuffers(1, [])
 
@@ -269,15 +270,15 @@ class PRTRender(CamRender):
         glUniformMatrix4fv(self.model_mat_unif, 1, GL_FALSE, self.model_view_matrix.transpose())
         glUniformMatrix4fv(self.persp_mat_unif, 1, GL_FALSE, self.projection_matrix.transpose())
 
-        if 'AlbedoMap' in self.render_texture_mat['all']:
-            glUniform1ui(self.hasAlbedoUnif, GLuint(1))
-        else:
-            glUniform1ui(self.hasAlbedoUnif, GLuint(0))
+        #if 'AlbedoMap' in self.render_texture_mat['all']:
+            #glUniform1ui(self.hasAlbedoUnif, GLuint(1))
+        #else:
+        glUniform1ui(self.hasAlbedoUnif, GLuint(0))
 
-        if 'NormalMap' in self.render_texture_mat['all']:
-            glUniform1ui(self.hasNormalUnif, GLuint(1))
-        else:
-            glUniform1ui(self.hasNormalUnif, GLuint(0))
+        #if 'NormalMap' in self.render_texture_mat['all']:
+            #glUniform1ui(self.hasNormalUnif, GLuint(1))
+        #else:
+        glUniform1ui(self.hasNormalUnif, GLuint(0))
 
         glUniform1ui(self.analyticUnif, GLuint(1) if self.analytic else GLuint(0))
 
@@ -292,24 +293,24 @@ class PRTRender(CamRender):
             glVertexAttribPointer(0, self.vertex_dim[mat], GL_DOUBLE, GL_FALSE, 0, None)
 
             # Handle normal buffer
-            glBindBuffer(GL_ARRAY_BUFFER, self.norm_buffer[mat])
-            glEnableVertexAttribArray(1)
-            glVertexAttribPointer(1, 3, GL_DOUBLE, GL_FALSE, 0, None)
+            #glBindBuffer(GL_ARRAY_BUFFER, self.norm_buffer[mat])
+            #glEnableVertexAttribArray(1)
+            #glVertexAttribPointer(1, 3, GL_DOUBLE, GL_FALSE, 0, None)
 
             # Handle uv buffer
-            glBindBuffer(GL_ARRAY_BUFFER, self.uv_buffer[mat])
-            glEnableVertexAttribArray(2)
-            glVertexAttribPointer(2, 2, GL_DOUBLE, GL_FALSE, 0, None)
+            #glBindBuffer(GL_ARRAY_BUFFER, self.uv_buffer[mat])
+            #glEnableVertexAttribArray(2)
+            #glVertexAttribPointer(2, 2, GL_DOUBLE, GL_FALSE, 0, None)
 
             # Handle tan buffer
-            glBindBuffer(GL_ARRAY_BUFFER, self.tan_buffer[mat])
-            glEnableVertexAttribArray(3)
-            glVertexAttribPointer(3, 3, GL_DOUBLE, GL_FALSE, 0, None)
+            #glBindBuffer(GL_ARRAY_BUFFER, self.tan_buffer[mat])
+            #glEnableVertexAttribArray(3)
+            #glVertexAttribPointer(3, 3, GL_DOUBLE, GL_FALSE, 0, None)
 
             # Handle btan buffer
-            glBindBuffer(GL_ARRAY_BUFFER, self.btan_buffer[mat])
-            glEnableVertexAttribArray(4)
-            glVertexAttribPointer(4, 3, GL_DOUBLE, GL_FALSE, 0, None)
+            #glBindBuffer(GL_ARRAY_BUFFER, self.btan_buffer[mat])
+            #glEnableVertexAttribArray(4)
+            #glVertexAttribPointer(4, 3, GL_DOUBLE, GL_FALSE, 0, None)
 
             # Handle PTR buffer
             glBindBuffer(GL_ARRAY_BUFFER, self.prt1_buffer[mat])
@@ -324,10 +325,10 @@ class PRTRender(CamRender):
             glEnableVertexAttribArray(7)
             glVertexAttribPointer(7, 3, GL_DOUBLE, GL_FALSE, 0, None)
 
-            for i, smplr in enumerate(self.render_texture_mat[mat]):
-                glActiveTexture(GL_TEXTURE0 + i)
-                glBindTexture(GL_TEXTURE_2D, self.render_texture_mat[mat][smplr])
-                glUniform1i(glGetUniformLocation(self.program, smplr), i)
+            #for i, smplr in enumerate(self.render_texture_mat[mat]):
+                #glActiveTexture(GL_TEXTURE0 + i)
+                #glBindTexture(GL_TEXTURE_2D, self.render_texture_mat[mat][smplr])
+                #glUniform1i(glGetUniformLocation(self.program, smplr), i)
 
             glDrawArrays(GL_TRIANGLES, 0, self.n_vertices[mat])
 

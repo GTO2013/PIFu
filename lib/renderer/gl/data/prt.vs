@@ -162,6 +162,6 @@ void main()
     VertexOut.PRT3 = vec3(PRT2[2],PRT2[3],PRT2[4]);
 
     gl_Position = PerspMat * ModelMat * vec4(RotMat * pos, 1.0);
-    
-    VertexOut.Depth = vec3(gl_Position.z / gl_Position.w);
+    VertexOut.Depth = vec3(gl_Position.z);
+   // VertexOut.Depth = vec3(gl_Position.z / gl_Position.w);
 }

@@ -78,8 +78,8 @@ class TrainDataset(Dataset):
         self.num_sample_inout = self.opt.num_sample_inout
         self.num_sample_color = self.opt.num_sample_color
 
-        self.yaw_list = list(range(0,360,1))
-        self.pitch_list = [0]
+        self.yaw_list = list(range(0,181,90))
+        self.pitch_list = [0,90]
         self.subjects = self.get_subjects()
 
         # PIL to tensor
@@ -109,7 +109,7 @@ class TrainDataset(Dataset):
             return sorted(list(var_subjects))
 
     def __len__(self):
-        return len(self.subjects) * len(self.yaw_list) * len(self.pitch_list)
+        return len(self.subjects)# * len(self.yaw_list) * len(self.pitch_list)
 
     def get_render(self, subject, num_views, yid=0, pid=0, random_sample=False):
         '''
@@ -123,20 +123,32 @@ class TrainDataset(Dataset):
             'extrinsic': [num_views, 4, 4] extrinsic matrix
             'mask': [num_views, 1, W, H] masks
         '''
-        pitch = self.pitch_list[pid]
+        #pitch = self.pitch_list[pid]
 
         # The ids are an even distribution of num_views around view_id
-        view_ids = [self.yaw_list[(yid + len(self.yaw_list) // num_views * offset) % len(self.yaw_list)]
-                    for offset in range(num_views)]
-        if random_sample:
-            view_ids = np.random.choice(self.yaw_list, num_views, replace=False)
+        #view_ids = [self.yaw_list[(yid + len(self.yaw_list) // num_views * offset) % len(self.yaw_list)]
+                    #for offset in range(num_views)]
 
+        #if random_sample:
+            #view_ids = np.random.choice(self.yaw_list, num_views, replace=False)
+
+        if num_views > 1:
+            view_ids = [0,90,90,180]
+        else:
+            view_ids = [90]
+        
         calib_list = []
         render_list = []
         mask_list = []
         extrinsic_list = []
 
-        for vid in view_ids:
+        for idx, vid in enumerate(view_ids):
+            pitch = 0
+            
+            if num_views > 1 and idx == 2:
+                pitch = 90
+
+            #print((vid,pitch))
             param_path = os.path.join(self.PARAM, subject, '%d_%d_%02d.npy' % (vid, pitch, 0))
             render_path = os.path.join(self.RENDER, subject, '%d_%d_%02d.jpg' % (vid, pitch, 0))
             mask_path = os.path.join(self.MASK, subject, '%d_%d_%02d.png' % (vid, pitch, 0))
@@ -345,9 +357,9 @@ class TrainDataset(Dataset):
         # In case of a missing file or IO error, switch to a random sample instead
         # try:
         sid = index % len(self.subjects)
-        tmp = index // len(self.subjects)
-        yid = tmp % len(self.yaw_list)
-        pid = tmp // len(self.yaw_list)
+        tmp = 0#index // len(self.subjects)
+        yid = 0#tmp % len(self.yaw_list)
+        pid = 0#tmp // len(self.yaw_list)
 
         # name of the subject 'rp_xxxx_xxx'
         subject = self.subjects[sid]
@@ -360,8 +372,9 @@ class TrainDataset(Dataset):
             'b_min': self.B_MIN,
             'b_max': self.B_MAX,
         }
+        
         render_data = self.get_render(subject, num_views=self.num_views, yid=yid, pid=pid,
-                                        random_sample=self.opt.random_multiview)
+                                        random_sample=False)#self.opt.random_multiview)
         res.update(render_data)
 
         if self.opt.num_sample_inout:

@@ -176,11 +176,13 @@ def load_obj_mesh(mesh_file, with_normal=False, with_texture=False):
     face_data = []
     face_norm_data = []
     face_uv_data = []
-
+    
     if isinstance(mesh_file, str):
         f = open(mesh_file, "r")
     else:
         f = mesh_file
+        
+    origFile = f
     for line in f:
         if isinstance(line, bytes):
             line = line.decode("utf-8")
@@ -239,7 +241,11 @@ def load_obj_mesh(mesh_file, with_normal=False, with_texture=False):
 
     vertices = np.array(vertex_data)
     faces = np.array(face_data) - 1
-
+    
+    origFile.close()
+    del origFile
+    del f
+    
     if with_texture and with_normal:
         uvs = np.array(uv_data)
         face_uvs = np.array(face_uv_data) - 1
@@ -262,7 +268,8 @@ def load_obj_mesh(mesh_file, with_normal=False, with_texture=False):
         norms = normalize_v3(norms)
         face_normals = np.array(face_norm_data) - 1
         return vertices, faces, norms, face_normals
-
+    
+    print("end")
     return vertices, faces
 
 

@@ -43,7 +43,7 @@ class Evaluator:
         if opt.load_netG_checkpoint_path:
             netG.load_state_dict(torch.load(opt.load_netG_checkpoint_path, map_location=cuda))
 
-        if opt.load_netC_checkpoint_path is not None:
+        if False and opt.load_netC_checkpoint_path is not None:
             print('loading for net C ...', opt.load_netC_checkpoint_path)
             netC = ResBlkPIFuNet(opt).to(device=cuda)
             netC.load_state_dict(torch.load(opt.load_netC_checkpoint_path, map_location=cuda))
@@ -102,6 +102,8 @@ class Evaluator:
             if self.netC:
                 gen_mesh_color(opt, self.netG, self.netC, self.cuda, data, save_path, use_octree=use_octree)
             else:
+                print("Before")
+                print(data['img'])
                 gen_mesh(opt, self.netG, self.cuda, data, save_path, use_octree=use_octree)
 
 

@@ -33,7 +33,9 @@ def train(opt):
 
     projection_mode = train_dataset.projection_mode
 
+    print("Creating loader...")
     # create data loader
+    print(opt.num_threads)
     train_data_loader = DataLoader(train_dataset,
                                    batch_size=opt.batch_size, shuffle=not opt.serial_batches,
                                    num_workers=opt.num_threads, pin_memory=opt.pin_memory)
@@ -81,12 +83,14 @@ def train(opt):
         outfile.write(json.dumps(vars(opt), indent=2))
 
     # training
+    print(opt.num_epoch)
     start_epoch = 0 if not opt.continue_train else max(opt.resume_epoch,0)
     for epoch in range(start_epoch, opt.num_epoch):
         epoch_start_time = time.time()
 
         set_train()
         iter_data_time = time.time()
+        print(len(train_data_loader))
         for train_idx, train_data in enumerate(train_data_loader):
             iter_start_time = time.time()
 
@@ -94,7 +98,7 @@ def train(opt):
             image_tensor = train_data['img'].to(device=cuda)
             calib_tensor = train_data['calib'].to(device=cuda)
             sample_tensor = train_data['samples'].to(device=cuda)
-
+            
             image_tensor, calib_tensor = reshape_multiview_tensors(image_tensor, calib_tensor)
 
             if opt.num_views > 1:
