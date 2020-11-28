@@ -1,0 +1,1 @@
+python -m apps.train_shape --dataroot C:\pifu\trainingData --gpu_id 0 --no_residual --batch_size 1 --num_sample_inout 14000 --resolution 512 --loadSize 256 --num_views 4 --num_threads 0

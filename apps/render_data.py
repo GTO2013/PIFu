@@ -13,9 +13,11 @@ import random
 import argparse
 from tqdm import tqdm
 import trimesh
+import mesh_to_sdf
 
 import shutil
 import pathlib
+import pyrender
 
 def make_rotate(rx, ry, rz):
     sinX = np.sin(rx)
@@ -147,17 +149,46 @@ def rotateBand2(x, R):
 
     return dst
 
-def render_prt_ortho(out_path, folder_name, subject_name, shs, rndr, rndr_uv, im_size, angl_step=4, n_light=1, pitch=[0]):
+def centerAndNormalizeMesh(mesh):
+    if isinstance(mesh, trimesh.Scene):
+        mesh = mesh.dump().sum()
+
+    extends = mesh.extents
+    vmin = mesh.vertices.min(0)
+    vmax = mesh.vertices.max(0)
+    center = (vmin+vmax)*0.5
+
+    m = trimesh.transformations.translation_matrix(-center)
+    meshPre = mesh.apply_transform(m)
+    m = trimesh.transformations.scale_matrix(1/np.max(extends))
+    mesh = meshPre.apply_transform(m)
+
+    return mesh
+
+def normalize_v3(arr):
+    ''' Normalize a numpy array of 3 component vectors shape=(n,3) '''
+    lens = np.sqrt( arr[:,0]**2 + arr[:,1]**2 + arr[:,2]**2)
+    arr[:,0] /= lens
+    arr[:,1] /= lens
+    arr[:,2] /= lens
+    return arr
+
+def render_prt_ortho(out_path, folder_name, view_dir, subject_name, shs, rndr, rndr_uv, im_size, angl_step=4, n_light=1, pitch=[0]):
     cam = Camera(width=im_size, height=im_size)
     cam.ortho_ratio = 1
     cam.near = -1000
     cam.far = 1000
     cam.sanity_check()
 
+    if not os.path.isfile(os.path.join(view_dir, "top_Blueprint.npy")):
+        print("No views for {0}, Skipping!".format(subject_name))
+        return
 
     # set path for obj, prt
     mesh_file = os.path.join(folder_name, subject_name + "_100k.obj")
-    print(mesh_file)
+    baseNewPath = os.path.join(out_path, 'GEO', 'OBJ', subject_name)
+    newPath = os.path.join(baseNewPath, subject_name + "_100k.obj")
+
     if not os.path.exists(mesh_file):
         print('ERROR: obj file does not exist!!', mesh_file)
         return 
@@ -170,32 +201,77 @@ def render_prt_ortho(out_path, folder_name, subject_name, shs, rndr, rndr_uv, im
         print('ERROR: face prt file does not exist!!!', prt_file)
         return
 
-    #text_file = os.path.join(folder_name, 'material0.png')
-    #if not os.path.exists(text_file):
-        #print('ERROR: Material file does not exist!!', text_file)
-        #return             
+    os.makedirs(os.path.join(out_path, 'GEO', 'OBJ', subject_name), exist_ok=True)
+    os.makedirs(os.path.join(out_path, 'PARAM', subject_name), exist_ok=True)
+    os.makedirs(os.path.join(out_path, 'RENDER', subject_name), exist_ok=True)
+    os.makedirs(os.path.join(out_path, 'MASK', subject_name), exist_ok=True)
+    os.makedirs(os.path.join(out_path, 'UV_RENDER', subject_name), exist_ok=True)
+    os.makedirs(os.path.join(out_path, 'UV_MASK', subject_name), exist_ok=True)
+    os.makedirs(os.path.join(out_path, 'UV_POS', subject_name), exist_ok=True)
+    os.makedirs(os.path.join(out_path, 'UV_NORMAL', subject_name), exist_ok=True)
 
-    #texture_image = cv2.imread(text_file)
-    #texture_image = cv2.cvtColor(texture_image, cv2.COLOR_BGR2RGB)
-   
-    #vertices, faces, normals, faces_normals, textures, face_textures = load_obj_mesh(mesh_file, with_normal=True, with_texture=False)
-    vertices, faces = load_obj_mesh(mesh_file, with_normal=False, with_texture=False)
+    copy = True
+    if copy:
+        basePathRender = os.path.join(out_path, 'RENDER',  subject_name)
+
+        topFrom = os.path.join(os.path.join(view_dir, "top_Blueprint.npy"))
+        topTo = os.path.join(os.path.join(basePathRender, "90_90_00.npy"))
+        sideFrom = os.path.join(os.path.join(view_dir, "side_Blueprint.npy"))
+        sideTo = os.path.join(os.path.join(basePathRender, "90_0_00.npy"))
+        frontFrom = os.path.join(os.path.join(view_dir, "front_Blueprint.npy"))
+        fromTo = os.path.join(os.path.join(basePathRender, "180_0_00.npy"))
+        backFrom = os.path.join(os.path.join(view_dir, "back_Blueprint.npy"))
+        backTo = os.path.join(os.path.join(basePathRender, "0_0_00.npy"))
+
+        topF = cv2.flip(np.load(topFrom), 1)
+        sideF = cv2.flip(np.load(sideFrom), 1)
+        np.save(topTo, topF)
+        np.save(sideTo, sideF)
+        #shutil.copy(topFrom, topTo)
+        #shutil.copy(sideFrom, sideTo)
+        shutil.copy(frontFrom, fromTo)
+        shutil.copy(backFrom, backTo)
+
+        print("Copied to {0} ".format(basePathRender))
+
+    exit(0)
+    meshNew = trimesh.load_mesh(mesh_file)
+    meshNew = centerAndNormalizeMesh(meshNew)
+    meshNew.export(newPath)
+    points, sdf = mesh_to_sdf.sample_sdf_near_surface(meshNew,  number_of_points=100000)
+    outPathPoints = os.path.join(os.path.join(baseNewPath, subject_name + "_points"))
+    outPathSDF = os.path.join(os.path.join(baseNewPath, subject_name + "_sdf"))
+
+    np.save(outPathPoints, points)
+    np.save(outPathSDF, sdf > 0)
+
+    exit(0)
+    #colors = np.zeros(points.shape)
+    #colors[sdf > 0,2] = 1
+    #colors[sdf < 0,0] = 1
+    #cloud = pyrender.Mesh.from_points(points, colors=colors)
+    #scene = pyrender.Scene()
+    #scene.add(cloud)
+    #viewer = pyrender.Viewer(scene, use_raymond_lighting=True, point_size = 2)
+    #exit(0)
+
+    vertices, faces = load_obj_mesh(newPath, with_normal=False, with_texture=False)
+    #os.remove(tempPath)
+
     vmin = vertices.min(0)
     vmax = vertices.max(0)
     up_axis = 1
     max_axis = 1 if (vmax-vmin).argmax() == 1 else 2
 
-    vmed = np.median(vertices, 0)
-    vmed[0] = 0.5*(vmax[0]+vmin[0])
-    vmed[1] = 0.5*(vmax[1]+vmin[1])
-    vmed[2] = 0.5*(vmax[2]+vmin[2])
-    
+    vmed = 0.5 * (vmax+vmin)
     y_scale = im_size / (vmax[max_axis] - vmin[max_axis])
 
-    rndr.set_norm_mat(y_scale, vmed)
-    rndr_uv.set_norm_mat(y_scale, vmed)
+    print(vmed)
+    print(y_scale)
 
-    #tan, bitan = compute_tangent(vertices, faces, normals, textures, face_textures)
+    rndr.set_norm_mat(y_scale, vmed)
+    #rndr_uv.set_norm_mat(y_scale, vmed)
+
     prt = np.loadtxt(prt_file)
 
     textures = None
@@ -207,32 +283,18 @@ def render_prt_ortho(out_path, folder_name, subject_name, shs, rndr, rndr_uv, im
     
     face_prt = np.load(face_prt_file)  
     rndr.set_mesh(vertices, faces, normals, faces_normals, textures, face_textures, prt, face_prt, tan, bitan)
-    #rndr.set_albedo(texture_image)
 
-    rndr_uv.set_mesh(vertices, faces, normals, faces_normals, textures, face_textures, prt, face_prt, tan, bitan)   
-    #rndr_uv.set_albedo(texture_image)
-
-    os.makedirs(os.path.join(out_path, 'GEO', 'OBJ', subject_name),exist_ok=True)
-    os.makedirs(os.path.join(out_path, 'PARAM', subject_name),exist_ok=True)
-    os.makedirs(os.path.join(out_path, 'RENDER', subject_name),exist_ok=True)
-    os.makedirs(os.path.join(out_path, 'MASK', subject_name),exist_ok=True)
-    os.makedirs(os.path.join(out_path, 'UV_RENDER', subject_name),exist_ok=True)
-    os.makedirs(os.path.join(out_path, 'UV_MASK', subject_name),exist_ok=True)
-    os.makedirs(os.path.join(out_path, 'UV_POS', subject_name),exist_ok=True)
-    os.makedirs(os.path.join(out_path, 'UV_NORMAL', subject_name),exist_ok=True)
+    #rndr_uv.set_mesh(vertices, faces, normals, faces_normals, textures, face_textures, prt, face_prt, tan, bitan)
 
     if not os.path.exists(os.path.join(out_path, 'val.txt')):
         f = open(os.path.join(out_path, 'val.txt'), 'w')
         f.close()
 
-    # copy obj file
-    shutil.copy(mesh_file, os.path.join(out_path, 'GEO', 'OBJ', subject_name))
-    
     sh_id = random.randint(0,shs.shape[0]-1)
     sh = shs[sh_id]
     sh_angle = 0.2*np.pi*(random.random()-0.5)
     sh = rotateSH(sh, make_rotate(0, sh_angle, 0).T)
-    j=0
+    j = 0
     
     for y in tqdm(range(0, 181, angl_step)):
         currentPitch = pitch
@@ -246,9 +308,9 @@ def render_prt_ortho(out_path, folder_name, subject_name, shs, rndr, rndr_uv, im
                 R = np.matmul(R, make_rotate(math.radians(90),0,0))
 
             rndr.rot_matrix = R
-            rndr_uv.rot_matrix = R
+            #rndr_uv.rot_matrix = R
             rndr.set_camera(cam)
-            rndr_uv.set_camera(cam)
+            #rndr_uv.set_camera(cam)
 
             dic = {'sh': sh, 'ortho_ratio': cam.ortho_ratio, 'scale': y_scale, 'center': vmed, 'R': R}
             
@@ -259,34 +321,34 @@ def render_prt_ortho(out_path, folder_name, subject_name, shs, rndr, rndr_uv, im
 
             out_all_f = rndr.get_color(0)
             out_mask = out_all_f[:,:,3]
-            out_all_f = cv2.cvtColor(out_all_f, cv2.COLOR_RGBA2BGR)
+            #out_all_f = cv2.cvtColor(out_all_f, cv2.COLOR_RGBA2BGR)
 
             np.save(os.path.join(out_path, 'PARAM', subject_name, '%d_%d_%02d.npy'%(y,p,j)),dic)
-            cv2.imwrite(os.path.join(out_path, 'RENDER', subject_name, '%d_%d_%02d.jpg'%(y,p,j)),255.0*out_all_f)
+            #cv2.imwrite(os.path.join(out_path, 'RENDER', subject_name, '%d_%d_%02d.jpg'%(y,p,j)),255.0*out_all_f)
             cv2.imwrite(os.path.join(out_path, 'MASK', subject_name, '%d_%d_%02d.png'%(y,p,j)),255.0*out_mask)             
         
-            rndr_uv.set_sh(sh)
-            rndr_uv.analytic = False
-            rndr_uv.use_inverse_depth = False
+            #rndr_uv.set_sh(sh)
+            #rndr_uv.analytic = False
+            #rndr_uv.use_inverse_depth = False
             #rndr_uv.display()
 
-            uv_color = rndr_uv.get_color(0)
-            uv_color = cv2.cvtColor(uv_color, cv2.COLOR_RGBA2BGR)
-            cv2.imwrite(os.path.join(out_path, 'UV_RENDER', subject_name, '%d_%d_%02d.jpg'%(y,p,j)),255.0*uv_color)
+            #uv_color = rndr_uv.get_color(0)
+            #uv_color = cv2.cvtColor(uv_color, cv2.COLOR_RGBA2BGR)
+            #cv2.imwrite(os.path.join(out_path, 'UV_RENDER', subject_name, '%d_%d_%02d.jpg'%(y,p,j)),255.0*uv_color)
 
-            if y == 0 and j == 0 and p == pitch[0]:
-                uv_pos = rndr_uv.get_color(1)
-                uv_mask = uv_pos[:,:,3]
-                cv2.imwrite(os.path.join(out_path, 'UV_MASK', subject_name, '00.png'),255.0*uv_mask)
+            #if y == 0 and j == 0 and p == pitch[0]:
+                #uv_pos = rndr_uv.get_color(1)
+                #uv_mask = uv_pos[:,:,3]
+                #cv2.imwrite(os.path.join(out_path, 'UV_MASK', subject_name, '00.png'),255.0*uv_mask)
 
                 #data = {'default': uv_pos[:,:,:3]} # default is a reserved name
-                cv2.imwrite(os.path.join(out_path, 'UV_POS', subject_name, '00.exr'), uv_pos[:,:,:3])
+                #cv2.imwrite(os.path.join(out_path, 'UV_POS', subject_name, '00.exr'), uv_pos[:,:,:3])
                 
                 #pyexr.write(os.path.join(out_path, 'UV_POS', subject_name, '00.exr'), data) 
 
-                uv_nml = rndr_uv.get_color(2)
-                uv_nml = cv2.cvtColor(uv_nml, cv2.COLOR_RGBA2BGR)
-                cv2.imwrite(os.path.join(out_path, 'UV_NORMAL', subject_name, '00.png'),255.0*uv_nml)
+                #uv_nml = rndr_uv.get_color(2)
+                #uv_nml = cv2.cvtColor(uv_nml, cv2.COLOR_RGBA2BGR)
+                #cv2.imwrite(os.path.join(out_path, 'UV_NORMAL', subject_name, '00.png'),255.0*uv_nml)
 
 
 if __name__ == '__main__':
@@ -294,23 +356,28 @@ if __name__ == '__main__':
     shs = np.load('./env_sh.npy')
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('-i', '--input', type=str, default='C:\\pifu\\baseData')
-    parser.add_argument('-o', '--out_dir', type=str, default='C:\\pifu\\trainingData')
+    parser.add_argument('-i', '--input', type=str, default=r'C:\pifu\baseData')
+    parser.add_argument('-o', '--out_dir', type=str, default=r'C:\pifu\trainingData')
+    parser.add_argument('-v', '--view_dir', type=str, default=r'C:\Blueprint2Car\data\training')
     parser.add_argument('-m', '--ms_rate', type=int, default=1, help='higher ms rate results in less aliased output. MESA renderer only supports ms_rate=1.')
     parser.add_argument('-e', '--egl',  action='store_true', help='egl rendering option. use this when rendering with headless server with NVIDIA GPU')
     parser.add_argument('-s', '--size',  type=int, default=512, help='rendering image size')
     args = parser.parse_args()
 
     # NOTE: GL context has to be created before any other OpenGL function loads.   
-    from lib.renderer.gl.init_gl import initialize_GL_context
-    initialize_GL_context(width=args.size, height=args.size, egl=args.egl)
+    #from lib.renderer.gl.init_gl import initialize_GL_context
+    #initialize_GL_context(width=args.size, height=args.size, egl=args.egl)
 
-    from lib.renderer.gl.prt_render import PRTRender
-    rndr = PRTRender(width=args.size, height=args.size, ms_rate=args.ms_rate, egl=args.egl)
-    rndr_uv = PRTRender(width=args.size, height=args.size, uv_mode=True, egl=args.egl)
+    #from lib.renderer.gl.prt_render import PRTRender
+    #rndr = PRTRender(width=args.size, height=args.size, ms_rate=args.ms_rate, egl=args.egl)
+    #rndr_uv = PRTRender(width=args.size, height=args.size, uv_mode=True, egl=args.egl)
+
+    rndr = None
+    rndr_uv = None
 
     p = pathlib.Path(args.input).name
-    render_prt_ortho(args.out_dir, args.input, p, shs, rndr, rndr_uv, args.size, 90, 1, pitch=[0])
+    viewDir = os.path.join(args.view_dir, p)
+    render_prt_ortho(args.out_dir, args.input, viewDir, p, shs, rndr, rndr_uv, args.size, 90, 1, pitch=[0])
 
         
 

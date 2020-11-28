@@ -5,6 +5,8 @@ import os
 import shutil
 import pathlib
 import os
+import cv2
+import numpy as np
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -22,10 +24,45 @@ if __name__ == '__main__':
         dirs.extend(dirnames)
         break
 
-    for d in dirs:
-        print(d)
+    for idx, d in enumerate(dirs):
+        print("------------- {0} / {1} -------------".format(idx, len(dirs)))
+
         arg = os.path.join(args.input, d)
-        os.system(r'conda activate pifu & python -m apps.render_data -i {0} &'.format(arg))       
+
+        print(arg)
+        out_path = r'C:\pifu\trainingData'
+        subject_name = d
+        view_dir =os.path.join(r'C:\Blueprint2Car\data\training', subject_name)
+
+        if not os.path.isfile(os.path.join(view_dir, "top_Blueprint.npy")):
+            print("No views for {0}, Skipping!".format(subject_name))
+            continue
+
+        copy = True
+        if copy:
+            basePathRender = os.path.join(out_path, 'RENDER', subject_name)
+
+            topFrom = os.path.join(os.path.join(view_dir, "top_Blueprint.npy"))
+            topTo = os.path.join(os.path.join(basePathRender, "90_90_00.npy"))
+            sideFrom = os.path.join(os.path.join(view_dir, "side_Blueprint.npy"))
+            sideTo = os.path.join(os.path.join(basePathRender, "90_0_00.npy"))
+            frontFrom = os.path.join(os.path.join(view_dir, "front_Blueprint.npy"))
+            fromTo = os.path.join(os.path.join(basePathRender, "180_0_00.npy"))
+            backFrom = os.path.join(os.path.join(view_dir, "back_Blueprint.npy"))
+            backTo = os.path.join(os.path.join(basePathRender, "0_0_00.npy"))
+
+            topF = cv2.flip(np.load(topFrom), 1)
+            sideF = cv2.flip(np.load(sideFrom), 1)
+            np.save(topTo, topF)
+            np.save(sideTo, sideF)
+            # shutil.copy(topFrom, topTo)
+            # shutil.copy(sideFrom, sideTo)
+            shutil.copy(frontFrom, fromTo)
+            shutil.copy(backFrom, backTo)
+
+            print("Copied to {0} ".format(basePathRender))
+
+        #os.system(r'conda activate pifu & python -m apps.render_data -i {0} &'.format(arg))
 
 
 

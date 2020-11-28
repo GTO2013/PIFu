@@ -49,7 +49,6 @@ class HGPIFuNet(BasePIFuNet):
         self.im_feat_list = []
         self.tmpx = None
         self.normx = None
-        self.images = None
 
         self.intermediate_preds_list = []
 
@@ -61,10 +60,10 @@ class HGPIFuNet(BasePIFuNet):
         store all intermediate features.
         :param images: [B, C, H, W] input images
         '''
-        self.im_feat_list, self.tmpx, self.normx, self.images = self.image_filter(images)
+        self.im_feat_list, self.tmpx, self.normx = self.image_filter(images)
         # If it is not in training, only produce the last im_feat
-        # if not self.training:
-        self.im_feat_list = [self.im_feat_list[-1]]
+        #if not self.training:
+            #self.im_feat_list = [self.im_feat_list[-1]]
 
     def query(self, points, calibs, transforms=None, labels=None):
         '''
@@ -85,8 +84,9 @@ class HGPIFuNet(BasePIFuNet):
         xy = xyz[:, :2, :]
         z = xyz[:, 2:3, :]
 
-        #in_img = (xy[:, 0] >= -1.0) & (xy[:, 0] <= 1.0) & (xy[:, 1] >= -1.0) & (xy[:, 1] <= 1.0)
-        #z_feat = self.normalizer(z, calibs=calibs)
+        in_img = (xy[:, 0] >= -1.0) & (xy[:, 0] <= 1.0) & (xy[:, 1] >= -1.0) & (xy[:, 1] <= 1.0)
+
+        z_feat = self.normalizer(z, calibs=calibs)
 
         if self.opt.skip_hourglass:
             tmpx_local_feature = self.index(self.tmpx, xy)
@@ -95,28 +95,19 @@ class HGPIFuNet(BasePIFuNet):
 
         for im_feat in self.im_feat_list:
             # [B, Feat_i + z, N]
-            #point_local_feat_list = [self.index(im_feat, xy), z_feat]
-            point_local_feat = self.index(im_feat, xy)
-            point_img = self.index(self.images, xy)
+            point_local_feat_list = [self.index(im_feat, xy), z_feat]
 
-            #if self.opt.skip_hourglass:
-                #point_local_feat_list.append(tmpx_local_feature)
+            if self.opt.skip_hourglass:
+                point_local_feat_list.append(tmpx_local_feature)
 
-            #point_local_feat = torch.cat(point_local_feat_list, 1)
-
-            total = torch.cat([point_local_feat, points, point_img], 1)
+            point_local_feat = torch.cat(point_local_feat_list, 1)
 
             # out of image plane is always set to 0
-            #print(point_local_feat.shape)
-
-            multi = total.view(points.shape[0]//self.num_views, -1, points.shape[2])
-            #print(multi.shape)
-            pred = self.surface_classifier(multi)
-            #pred = in_img[:, None].float() * self.surface_classifier(multi)
+            pred = in_img[:,None].float() * self.surface_classifier(point_local_feat)
             self.intermediate_preds_list.append(pred)
 
         self.preds = self.intermediate_preds_list[-1]
-        #print(self.preds.shape)
+
     def get_im_feat(self):
         '''
         Get the image filter
@@ -132,7 +123,7 @@ class HGPIFuNet(BasePIFuNet):
         for preds in self.intermediate_preds_list:
             error += self.error_term(preds, self.labels)
         error /= len(self.intermediate_preds_list)
-
+        
         return error
 
     def forward(self, images, points, calibs, transforms=None, labels=None):
@@ -144,7 +135,7 @@ class HGPIFuNet(BasePIFuNet):
 
         # get the prediction
         res = self.get_preds()
-
+        
         # get the error
         error = self.get_error()
 

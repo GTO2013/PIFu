@@ -6,7 +6,7 @@ set -ex
 conda activate pifu 
 
 # Training
-GPU_ID=1
+GPU_ID=0
 DISPLAY_ID=$((GPU_ID*10+10))
 NAME='pifu_demo'
 
@@ -20,14 +20,15 @@ MLP_DIM_COLOR='513 1024 512 256 128 3'
 # NOTE: one can change here to reconstruct mesh in a different resolution.
 VOL_RES=256
 
-CHECKPOINTS_NETG_PATH='../checkpoints/example/netG_latest'
-CHECKPOINTS_NETC_PATH='../checkpoints/net_C'
+CHECKPOINTS_NETG_PATH='./checkpoints/example/netG_latest'
+CHECKPOINTS_NETC_PATH='./checkpoints/net_C'
 
-TEST_FOLDER_PATH='../sample_images'
+TEST_FOLDER_PATH='./sample_images'
 
 # command
-CUDA_VISIBLE_DEVICES=${GPU_ID} python ../apps/eval.py \
+CUDA_VISIBLE_DEVICES=${GPU_ID} python ./apps/eval.py \
     --name ${NAME} \
+    --num_views 1 \
     --batch_size ${BATCH_SIZE} \
     --mlp_dim ${MLP_DIM} \
     --mlp_dim_color ${MLP_DIM_COLOR} \

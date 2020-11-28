@@ -20,7 +20,7 @@ class BaseOptions():
                            help='name of the experiment. It decides where to store samples and models')
         g_exp.add_argument('--debug', action='store_true', help='debug mode or not')
 
-        g_exp.add_argument('--num_views', type=int, default=4, help='How many views to use for multiview network.')
+        g_exp.add_argument('--num_views', type=int, default=1, help='How many views to use for multiview network.')
         g_exp.add_argument('--random_multiview', default=False, action='store_true', help='Select random multiview combination.')
 
         # Training related
@@ -55,31 +55,36 @@ class BaseOptions():
 
         # Sampling related
         g_sample = parser.add_argument_group('Sampling')
-        g_sample.add_argument('--sigma', type=float, default=5.0, help='perturbation standard deviation for positions')
+        g_sample.add_argument('--sigma', type=float, default=.01, help='perturbation standard deviation for positions')
 
         #g_sample.add_argument('--num_sample_inout', type=int, default=5000, help='# of sampling points')
         g_sample.add_argument('--num_sample_inout', type=int, default=5000, help='# of sampling points')
         g_sample.add_argument('--num_sample_color', type=int, default=0, help='# of sampling points')
 
-        g_sample.add_argument('--z_size', type=float, default=200.0, help='z normalization factor')
+        g_sample.add_argument('--z_size', type=float, default=0.5, help='z normalization factor')
+        #g_sample.add_argument('--z_size', type=float, default=300.0, help='z normalization factor')
 
         # Model related
         g_model = parser.add_argument_group('Model')
         # General
-        g_model.add_argument('--norm', type=str, default='group',
+        g_model.add_argument('--norm', type=str, default='batch',
                              help='instance normalization or batch normalization or group normalization')
+        #g_model.add_argument('--norm', type=str, default='group', help='instance normalization or batch normalization or group normalization')
+        #g_model.add_argument('--norm', type=str, default='batch', help='instance normalization or batch normalization or group normalization')
         g_model.add_argument('--norm_color', type=str, default='instance',
                              help='instance normalization or batch normalization or group normalization')
 
         # hg filter specify
-        g_model.add_argument('--num_stack', type=int, default=4, help='# of hourglass')
+        g_model.add_argument('--num_stack', type=int, default=1, help='# of hourglass')
+        #g_model.add_argument('--num_stack', type=int, default=4, help='# of hourglass')
         g_model.add_argument('--num_hourglass', type=int, default=2, help='# of stacked layer of hourglass')
         g_model.add_argument('--skip_hourglass', action='store_true', help='skip connection in hourglass')
         g_model.add_argument('--hg_down', type=str, default='ave_pool', help='ave pool || conv64 || conv128')
         g_model.add_argument('--hourglass_dim', type=int, default='256', help='256 | 512')
 
         # Classification General
-        g_model.add_argument('--mlp_dim', nargs='+', default=[257, 1024, 512, 256, 128, 1], type=int,
+        #g_model.add_argument('--mlp_dim', nargs='+', default=[257, 1024, 512, 256, 128, 1], type=int, help='# of dimensions of mlp')
+        g_model.add_argument('--mlp_dim', nargs='+', default=[1040, 1040, 512, 256, 128, 1], type=int,
                              help='# of dimensions of mlp')
         g_model.add_argument('--mlp_dim_color', nargs='+', default=[513, 1024, 512, 256, 128, 3],
                              type=int, help='# of dimensions of color mlp')
@@ -92,9 +97,9 @@ class BaseOptions():
         parser.add_argument('--random_trans', action='store_true', help='if random flip')
         parser.add_argument('--random_scale', action='store_true', help='if random flip')
         parser.add_argument('--no_residual', action='store_true', help='no skip connection in mlp')
-        parser.add_argument('--schedule', type=int, nargs='+', default=[60, 80],
+        parser.add_argument('--schedule', type=int, nargs='+', default=[10, 25, 60, 80],
                             help='Decrease learning rate at these epochs.')
-        parser.add_argument('--gamma', type=float, default=0.1, help='LR is multiplied by gamma on schedule.')
+        parser.add_argument('--gamma', type=float, default=0.5, help='LR is multiplied by gamma on schedule.')
         parser.add_argument('--color_loss_type', type=str, default='l1', help='mse | l1')
 
         # for eval

@@ -26,7 +26,8 @@ opt = BaseOptions().parse()
 
 def train(opt):
     # set cuda
-    cuda = torch.device('cuda:%d' % opt.gpu_id)
+    cuda = torch.device('cuda')#torch.device('cpu')#torch.device('cuda:%d' % opt.gpu_id)
+    torch.cuda.empty_cache()
 
     train_dataset = TrainDataset(opt, phase='train')
     test_dataset = TrainDataset(opt, phase='test')

@@ -14,7 +14,7 @@ def initialize_GL_context(width=512, height=512, egl=False):
             GLUT.glutInitDisplayMode(display_mode)
             GLUT.glutInitWindowSize(width, height)
             GLUT.glutInitWindowPosition(0, 0)
-            _glut_window = GLUT.glutCreateWindow("My Render.")
+            _glut_window = GLUT.glutCreateWindow(b"My Render")
     else:
         from .glcontext import create_opengl_context
         global _context_inited

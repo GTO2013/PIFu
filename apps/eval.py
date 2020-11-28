@@ -102,8 +102,6 @@ class Evaluator:
             if self.netC:
                 gen_mesh_color(opt, self.netG, self.netC, self.cuda, data, save_path, use_octree=use_octree)
             else:
-                print("Before")
-                print(data['img'])
                 gen_mesh(opt, self.netG, self.cuda, data, save_path, use_octree=use_octree)
 
 

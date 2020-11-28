@@ -64,12 +64,13 @@ class HGFilter(nn.Module):
         self.opt = opt
 
         # Base part
-        self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3)
+        self.conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=1, padding=3)
 
         if self.opt.norm == 'batch':
             self.bn1 = nn.BatchNorm2d(64)
         elif self.opt.norm == 'group':
             self.bn1 = nn.GroupNorm(32, 64)
+
 
         if self.opt.hg_down == 'conv64':
             self.conv2 = ConvBlock(64, 64, self.opt.norm)
@@ -107,6 +108,7 @@ class HGFilter(nn.Module):
                                                                  256, kernel_size=1, stride=1, padding=0))
 
     def forward(self, x):
+        input = x
         x = F.relu(self.bn1(self.conv1(x)), True)
         tmpx = x
         if self.opt.hg_down == 'ave_pool':
@@ -143,4 +145,4 @@ class HGFilter(nn.Module):
                 tmp_out_ = self._modules['al' + str(i)](tmp_out)
                 previous = previous + ll + tmp_out_
 
-        return outputs, tmpx.detach(), normx
+        return outputs, tmpx.detach(), normx, input

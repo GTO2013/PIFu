@@ -49,23 +49,31 @@ def gen_mesh(opt, net, cuda, data, save_path, use_octree=True):
 
     b_min = data['b_min']
     b_max = data['b_max']
+    print("\nMin BB: {0}, Max BB: {1}".format(b_min, b_max))
+
     try:
         save_img_path = save_path[:-4] + '.png'
         save_img_list = []
+
         for v in range(image_tensor.shape[0]):
-            save_img = (np.transpose(image_tensor[v].detach().cpu().numpy(), (1, 2, 0)) * 0.5 + 0.5)[:, :, ::-1] * 255.0
+            save_img = (np.transpose(image_tensor[v].detach().cpu().numpy(), (1, 2, 0)) * 0.5 + 0.5) * 255.0
+            #save_img = (np.transpose(image_tensor[v].detach().cpu().numpy(), (1, 2, 0)) * 0.5 + 0.5)[:, :, ::-1] * 255.0
             save_img_list.append(save_img)
+
         save_img = np.concatenate(save_img_list, axis=1)
-        Image.fromarray(np.uint8(save_img[:,:,::-1])).save(save_img_path)
+        Image.fromarray(np.uint8(save_img[:, :, 0]), mode='L').save(save_img_path)
+
+        #Image.fromarray(np.uint8(save_img[:,:,::-1])).save(save_img_path)
 
         verts, faces, _, _ = reconstruction(
             net, cuda, calib_tensor, opt.resolution, b_min, b_max, use_octree=use_octree)
-        verts_tensor = torch.from_numpy(verts.T).unsqueeze(0).to(device=cuda).float()
-        xyz_tensor = net.projection(verts_tensor, calib_tensor[:1])
-        uv = xyz_tensor[:, :2, :]
-        color = index(image_tensor[:1], uv).detach().cpu().numpy()[0].T
-        color = color * 0.5 + 0.5
-        save_obj_mesh_with_color(save_path, verts, faces, color)
+        #verts_tensor = torch.from_numpy(verts.T).unsqueeze(0).to(device=cuda).float()
+        #xyz_tensor = net.projection(verts_tensor, calib_tensor[:1])
+        #uv = xyz_tensor[:, :2, :]
+        #color = index(image_tensor[:1], uv).detach().cpu().numpy()[0].T
+        #color = color * 0.5 + 0.5
+        save_obj_mesh(save_path, verts, faces)
+        #save_obj_mesh_with_color(save_path, verts, faces, color)
     except Exception as e:
         print(e)
         print('Can not create marching cubes at this time.')

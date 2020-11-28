@@ -1,1 +1,0 @@
-python -m apps.train_shape --dataroot C:\pifu\trainingDataDebug --no_gen_mesh --batch_size 1 --num_sample_inout 4000 --loadSize 512 --num_views 1 --num_threads 0

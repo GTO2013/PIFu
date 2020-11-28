@@ -1,4 +1,6 @@
 checkpoints/*
 baseData/*
 trainingData/*
+trainingData_Backup/*
 trainingDataDebug/*
+results/*

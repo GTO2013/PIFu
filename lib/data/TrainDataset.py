@@ -9,18 +9,44 @@ import torch
 from PIL.ImageFilter import GaussianBlur
 import trimesh
 import logging
+import psutil
+from multiprocessing import Manager, Process
 
 log = logging.getLogger('trimesh')
 log.setLevel(40)
 
-def load_trimesh(root_dir):
-    folders = os.listdir(root_dir)
-    meshs = {}
-    for i, f in enumerate(folders):
-        sub_name = f
-        meshs[sub_name] = trimesh.load(os.path.join(root_dir, f, '%s_100k.obj' % sub_name))
 
-    return meshs
+def load_chunk(root_dir, foldersLocal, meshs, sdf):
+
+    for i, sub_name in enumerate(foldersLocal):
+        if psutil.virtual_memory().percent < 85:
+            print("Loading ... {0} / {1}".format(i, len(foldersLocal)))
+            if sdf is None:
+                meshs[sub_name] = trimesh.load(os.path.join(root_dir, sub_name, '%s_100k.obj' % sub_name))
+            else:
+                meshs[sub_name] = np.load(os.path.join(root_dir, sub_name, '%s_points.npy' % sub_name))
+                sdf[sub_name] = np.load(os.path.join(root_dir, sub_name, '%s_sdf.npy' % sub_name))
+        else:
+            print("Stopping, running out of memory soon. Rest will be streamed from disc.")
+            break
+
+def load_trimesh(root_dir, folders, loadSdf = True):
+
+    num_cpus = psutil.cpu_count(logical=False)
+    chunks = [folders[i::num_cpus] for i in range(num_cpus)]
+
+    manager = Manager()
+    points = manager.dict()
+    sdf = None
+
+    if loadSdf:
+        sdf = manager.dict()
+
+    job = [Process(target=load_chunk, args=(root_dir, chunks[i], points, sdf)) for i in range(num_cpus)]
+    _ = [p.start() for p in job]
+    _ = [p.join() for p in job]
+
+    return points, sdf
 
 def save_samples_truncted_prob(fname, points, prob):
     '''
@@ -67,8 +93,8 @@ class TrainDataset(Dataset):
         self.UV_POS = os.path.join(self.root, 'UV_POS')
         self.OBJ = os.path.join(self.root, 'GEO', 'OBJ')
 
-        self.B_MIN = np.array([-128, -28, -128])
-        self.B_MAX = np.array([128, 228, 128])
+        self.B_MIN = np.array([-0.5, -0.5, -0.5])
+        self.B_MAX = np.array([0.5, 0.5, 0.5])
 
         self.is_train = (phase == 'train')
         self.load_size = self.opt.loadSize
@@ -79,14 +105,15 @@ class TrainDataset(Dataset):
         self.num_sample_color = self.opt.num_sample_color
 
         self.yaw_list = list(range(0,181,90))
-        self.pitch_list = [0,90]
+        self.pitch_list = [0, 90]
         self.subjects = self.get_subjects()
 
         # PIL to tensor
         self.to_tensor = transforms.Compose([
             transforms.Resize(self.load_size),
             transforms.ToTensor(),
-            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+            transforms.Normalize(0.5, 0.5)
+            #transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
         ])
 
         # augmentation
@@ -95,10 +122,30 @@ class TrainDataset(Dataset):
                                    hue=opt.aug_hue)
         ])
 
-        self.mesh_dic = load_trimesh(self.OBJ)
+        self.loadSdf = True
+        #self.mesh_dic = load_trimesh(self.OBJ)
+        self.points_dic = None
+        self.sdf_dic = None
+
+        points, sdf = load_trimesh(self.OBJ, self.subjects, loadSdf=self.loadSdf)
+        self.points_dic = points
+        self.sdf_dic = sdf
 
     def get_subjects(self):
-        all_subjects = os.listdir(self.RENDER)
+        #all_subjects = os.listdir(self.OBJ)
+
+        all_subjects = []
+        listAll = os.listdir(self.OBJ)
+
+        for subject in listAll:
+            if os.path.exists(os.path.join(self.OBJ, subject, '%s_points.npy' % subject)):
+                if os.path.exists(os.path.join(self.RENDER, subject, '0_0_00.npy')):
+                    all_subjects.append(subject)
+                else:
+                    print("%s has no .npy render!" % subject)
+            else:
+                print("%s has no .npy file!" % subject)
+
         var_subjects = np.loadtxt(os.path.join(self.root, 'val.txt'), dtype=str)
         if len(var_subjects) == 0:
             return all_subjects
@@ -132,8 +179,10 @@ class TrainDataset(Dataset):
         #if random_sample:
             #view_ids = np.random.choice(self.yaw_list, num_views, replace=False)
 
-        if num_views > 1:
-            view_ids = [0,90,90,180]
+        if num_views == 4:
+            view_ids = [0, 90, 90, 180]
+        elif num_views == 3:
+            view_ids = [0, 90, 180]
         else:
             view_ids = [90]
         
@@ -145,12 +194,13 @@ class TrainDataset(Dataset):
         for idx, vid in enumerate(view_ids):
             pitch = 0
             
-            if num_views > 1 and idx == 2:
+            if num_views == 4 and idx == 2:
                 pitch = 90
 
             #print((vid,pitch))
             param_path = os.path.join(self.PARAM, subject, '%d_%d_%02d.npy' % (vid, pitch, 0))
-            render_path = os.path.join(self.RENDER, subject, '%d_%d_%02d.jpg' % (vid, pitch, 0))
+            #render_path = os.path.join(self.RENDER, subject, '%d_%d_%02d.jpg' % (vid, pitch, 0))
+            render_path = os.path.join(self.RENDER, subject, '%d_%d_%02d.npy' % (vid, pitch, 0))
             mask_path = os.path.join(self.MASK, subject, '%d_%d_%02d.png' % (vid, pitch, 0))
 
             # loading calibration data
@@ -158,7 +208,7 @@ class TrainDataset(Dataset):
             # pixel unit / world unit
             ortho_ratio = param.item().get('ortho_ratio')
             # world unit / model unit
-            scale = param.item().get('scale')
+            scale = param.item().get('scale') * (self.opt.loadSize/512)
             # camera center world coordinate
             center = param.item().get('center')
             # model rotation
@@ -181,7 +231,14 @@ class TrainDataset(Dataset):
             trans_intrinsic = np.identity(4)
 
             mask = Image.open(mask_path).convert('L')
-            render = Image.open(render_path).convert('RGB')
+            dataRen = np.load(render_path)
+            render = Image.fromarray(dataRen, mode='L')
+
+            #render = Image.open(render_path).convert('L')
+            #render = Image.open(render_path).convert('RGB')
+
+            render = render.resize((self.load_size, self.load_size), Image.BILINEAR)
+            mask = mask.resize((self.load_size, self.load_size), Image.BILINEAR)
 
             if self.is_train:
                 # Pad images
@@ -243,7 +300,7 @@ class TrainDataset(Dataset):
             mask_list.append(mask)
 
             render = self.to_tensor(render)
-            render = mask.expand_as(render) * render
+            #render = mask.expand_as(render) * render
 
             render_list.append(render)
             calib_list.append(calib)
@@ -261,17 +318,37 @@ class TrainDataset(Dataset):
             random.seed(1991)
             np.random.seed(1991)
             torch.manual_seed(1991)
-        mesh = self.mesh_dic[subject]
-        surface_points, _ = trimesh.sample.sample_surface(mesh, 4 * self.num_sample_inout)
-        sample_points = surface_points + np.random.normal(scale=self.opt.sigma, size=surface_points.shape)
 
-        # add random points within image space
-        length = self.B_MAX - self.B_MIN
-        random_points = np.random.rand(self.num_sample_inout // 4, 3) * length + self.B_MIN
-        sample_points = np.concatenate([sample_points, random_points], 0)
-        np.random.shuffle(sample_points)
+        bounds = {'b_min': self.B_MIN, 'b_max': self.B_MAX}
 
-        inside = mesh.contains(sample_points)
+        if self.loadSdf:
+            points = self.points_dic[subject]
+            sdf = self.sdf_dic[subject]
+
+            num = 4 * self.num_sample_inout + self.num_sample_inout // 4
+            index = np.random.choice(sdf.shape[0], num, replace=False)
+            sample_points = points[index]
+            inside = np.logical_not(sdf[index])
+        else:
+            if subject in self.mesh_dic:
+                mesh = self.mesh_dic[subject]
+            else:
+                mesh = trimesh.load(os.path.join(self.OBJ, subject, '%s_100k.obj' % subject))
+
+            #bounds = {'b_min': -mesh.extents/2, 'b_max': mesh.extents/2}
+            surface_points, _ = trimesh.sample.sample_surface(mesh, 4 * self.num_sample_inout)
+            sample_points = surface_points + np.random.normal(scale=self.opt.sigma, size=surface_points.shape)
+
+            # add random points within image space
+            length = bounds['b_max'] - bounds['b_min']
+            random_points = np.random.rand(self.num_sample_inout // 4, 3) * length + bounds['b_min']
+
+            sample_points = np.concatenate([sample_points, random_points], 0)
+            np.random.shuffle(sample_points)
+
+            inside = mesh.contains(sample_points)
+            del mesh
+
         inside_points = sample_points[inside]
         outside_points = sample_points[np.logical_not(inside)]
 
@@ -285,19 +362,16 @@ class TrainDataset(Dataset):
         samples = np.concatenate([inside_points, outside_points], 0).T
         labels = np.concatenate([np.ones((1, inside_points.shape[0])), np.zeros((1, outside_points.shape[0]))], 1)
 
-        # save_samples_truncted_prob('out.ply', samples.T, labels.T)
-        # exit()
+        #save_samples_truncted_prob('out_{0}_old.ply'.format(subject), samples.T, labels.T)
+        #exit(0)
 
         samples = torch.Tensor(samples).float()
         labels = torch.Tensor(labels).float()
-        
-        del mesh
 
         return {
             'samples': samples,
             'labels': labels
-        }
-
+        }, bounds
 
     def get_color_sampling(self, subject, yid, pid=0):
         yaw = self.yaw_list[yid]
@@ -372,15 +446,19 @@ class TrainDataset(Dataset):
             'b_min': self.B_MIN,
             'b_max': self.B_MAX,
         }
-        
+
+        if self.opt.num_sample_inout:
+            sample_data, boundingBox = self.select_sampling_method(subject)
+            res.update(sample_data)
+
+        #print(boundingBox)
+
+        res.update(boundingBox)
+
         render_data = self.get_render(subject, num_views=self.num_views, yid=yid, pid=pid,
                                         random_sample=False)#self.opt.random_multiview)
         res.update(render_data)
 
-        if self.opt.num_sample_inout:
-            sample_data = self.select_sampling_method(subject)
-            res.update(sample_data)
-        
         # img = np.uint8((np.transpose(render_data['img'][0].numpy(), (1, 2, 0)) * 0.5 + 0.5)[:, :, ::-1] * 255.0)
         # rot = render_data['calib'][0,:3, :3]
         # trans = render_data['calib'][0,:3, 3:4]

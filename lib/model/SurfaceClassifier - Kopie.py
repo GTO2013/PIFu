@@ -15,9 +15,17 @@ class SurfaceClassifier(nn.Module):
 
         if self.no_residual:
             for l in range(0, len(filter_channels) - 1):
+                mult = 1
+                outMult = 1
+
+                #if len(filter_channels)//2 <= l < len(filter_channels) - 1:
+                    #mult = self.num_views
+
+                #outMult = mult if l < len(filter_channels) - 2 else 1
+
                 self.filters.append(nn.Conv1d(
-                    filter_channels[l],
-                    filter_channels[l + 1],
+                    filter_channels[l] * mult,
+                    filter_channels[l + 1] * outMult,
                     1))
                 self.add_module("conv%d" % l, self.filters[l])
         else:
@@ -35,6 +43,39 @@ class SurfaceClassifier(nn.Module):
                         1))
 
                 self.add_module("conv%d" % l, self.filters[l])
+
+        print(self)
+
+    def forwardNew(self, feature):
+        '''
+
+        :param feature: list of [BxC_inxHxW] tensors of image features
+        :param xy: [Bx3xN] tensor of (x,y) coodinates in the image plane
+        :return: [BxC_outxN] tensor of features extracted at the coordinates
+        '''
+
+        y = feature
+        tmpy = feature
+        for i, f in enumerate(self.filters):
+            if self.no_residual:
+                y = self._modules['conv' + str(i)](y)
+            else:
+                y = self._modules['conv' + str(i)](
+                    y if i == 0
+                    else torch.cat([y, tmpy], 1)
+                )
+            if i != len(self.filters) - 1:
+                y = F.leaky_relu(y)
+
+            print(y.shape)
+            if self.num_views > 1 and i == len(self.filters)//2:
+                y = y.view(y.shape[0], -1, y.shape[2])
+                tmpy = feature.view(feature.shape[0], -1, feature.shape[2])
+
+        if self.last_op:
+            y = self.last_op(y)
+
+        return y
 
     def forward(self, feature):
         '''
@@ -57,13 +98,9 @@ class SurfaceClassifier(nn.Module):
             if i != len(self.filters) - 1:
                 y = F.leaky_relu(y)
 
-            if False and self.num_views > 1 and i == len(self.filters) // 2:
-                y = y.view(
-                    -1, self.num_views, y.shape[1], y.shape[2]
-                ).mean(dim=1)
-                tmpy = feature.view(
-                    -1, self.num_views, feature.shape[1], feature.shape[2]
-                ).mean(dim=1)
+            if self.num_views > 1 and i == len(self.filters) // 2:
+                y = y.view(-1, self.num_views, y.shape[1], y.shape[2]).mean(dim=1)
+                tmpy = feature.view(-1, self.num_views, feature.shape[1], feature.shape[2]).mean(dim=1)
 
         if self.last_op:
             y = self.last_op(y)
