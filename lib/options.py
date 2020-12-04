@@ -67,25 +67,25 @@ class BaseOptions():
         # Model related
         g_model = parser.add_argument_group('Model')
         # General
-        g_model.add_argument('--norm', type=str, default='batch',
-                             help='instance normalization or batch normalization or group normalization')
-        #g_model.add_argument('--norm', type=str, default='group', help='instance normalization or batch normalization or group normalization')
-        #g_model.add_argument('--norm', type=str, default='batch', help='instance normalization or batch normalization or group normalization')
+        g_model.add_argument('--norm', type=str, default='group', help='instance normalization or batch normalization or group normalization')
         g_model.add_argument('--norm_color', type=str, default='instance',
                              help='instance normalization or batch normalization or group normalization')
 
         # hg filter specify
-        g_model.add_argument('--num_stack', type=int, default=1, help='# of hourglass')
+        g_model.add_argument('--num_stack', type=int, default=2, help='# of hourglass')
         #g_model.add_argument('--num_stack', type=int, default=4, help='# of hourglass')
         g_model.add_argument('--num_hourglass', type=int, default=2, help='# of stacked layer of hourglass')
         g_model.add_argument('--skip_hourglass', action='store_true', help='skip connection in hourglass')
         g_model.add_argument('--hg_down', type=str, default='ave_pool', help='ave pool || conv64 || conv128')
         g_model.add_argument('--hourglass_dim', type=int, default='256', help='256 | 512')
+        g_model.add_argument('--hourglass_dim_internal', type=int, default='128', help='256 | 512')
+        g_model.add_argument('--skip_downsample', action='store_true')
+
 
         # Classification General
         #g_model.add_argument('--mlp_dim', nargs='+', default=[257, 1024, 512, 256, 128, 1], type=int, help='# of dimensions of mlp')
-        g_model.add_argument('--mlp_dim', nargs='+', default=[1040, 1040, 512, 256, 128, 1], type=int,
-                             help='# of dimensions of mlp')
+        #g_model.add_argument('--mlp_dim', nargs='+', default=[1027, 1024, 512, 256, 128, 1], type=int, help='# of dimensions of mlp')
+        g_model.add_argument('--mlp_dim', nargs='+', default=[67, 1024, 512, 256, 128, 1], type=int, help='# of dimensions of mlp')
         g_model.add_argument('--mlp_dim_color', nargs='+', default=[513, 1024, 512, 256, 128, 3],
                              type=int, help='# of dimensions of color mlp')
 

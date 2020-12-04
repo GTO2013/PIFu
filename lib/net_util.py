@@ -343,7 +343,7 @@ class Flatten(nn.Module):
         return input.view(input.size(0), -1)
 
 class ConvBlock(nn.Module):
-    def __init__(self, in_planes, out_planes, norm='batch'):
+    def __init__(self, in_planes, out_planes, norm='batch', groupNormSize = 32):
         super(ConvBlock, self).__init__()
         self.conv1 = conv3x3(in_planes, int(out_planes / 2))
         self.conv2 = conv3x3(int(out_planes / 2), int(out_planes / 4))
@@ -355,10 +355,10 @@ class ConvBlock(nn.Module):
             self.bn3 = nn.BatchNorm2d(int(out_planes / 4))
             self.bn4 = nn.BatchNorm2d(in_planes)
         elif norm == 'group':
-            self.bn1 = nn.GroupNorm(32, in_planes)
-            self.bn2 = nn.GroupNorm(32, int(out_planes / 2))
-            self.bn3 = nn.GroupNorm(32, int(out_planes / 4))
-            self.bn4 = nn.GroupNorm(32, in_planes)
+            self.bn1 = nn.GroupNorm(groupNormSize, in_planes)
+            self.bn2 = nn.GroupNorm(groupNormSize, int(out_planes / 2))
+            self.bn3 = nn.GroupNorm(groupNormSize, int(out_planes / 4))
+            self.bn4 = nn.GroupNorm(groupNormSize, in_planes)
         
         if in_planes != out_planes:
             self.downsample = nn.Sequential(

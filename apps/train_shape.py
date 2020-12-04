@@ -26,7 +26,7 @@ opt = BaseOptions().parse()
 
 def train(opt):
     # set cuda
-    cuda = torch.device('cuda')#torch.device('cpu')#torch.device('cuda:%d' % opt.gpu_id)
+    cuda = torch.device('cuda:%d' % opt.gpu_id)
     torch.cuda.empty_cache()
 
     train_dataset = TrainDataset(opt, phase='train')
@@ -83,8 +83,9 @@ def train(opt):
     with open(opt_log, 'w') as outfile:
         outfile.write(json.dumps(vars(opt), indent=2))
 
+    #scaler = torch.cuda.amp.GradScaler()
+
     # training
-    print(opt.num_epoch)
     start_epoch = 0 if not opt.continue_train else max(opt.resume_epoch,0)
     for epoch in range(start_epoch, opt.num_epoch):
         epoch_start_time = time.time()
@@ -107,11 +108,16 @@ def train(opt):
 
             label_tensor = train_data['labels'].to(device=cuda)
 
+            optimizerG.zero_grad()
+
+            #with torch.cuda.amp.autocast():
             res, error = netG.forward(image_tensor, sample_tensor, calib_tensor, labels=label_tensor)
 
-            optimizerG.zero_grad()
+            #scaler.scale(error).backward()
             error.backward()
             optimizerG.step()
+            #scaler.step(optimizerG)
+            #scaler.update()
 
             iter_net_time = time.time()
             eta = ((iter_net_time - epoch_start_time) / (train_idx + 1)) * len(train_data_loader) - (

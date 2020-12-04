@@ -93,8 +93,8 @@ class TrainDataset(Dataset):
         self.UV_POS = os.path.join(self.root, 'UV_POS')
         self.OBJ = os.path.join(self.root, 'GEO', 'OBJ')
 
-        self.B_MIN = np.array([-0.5, -0.5, -0.5])
-        self.B_MAX = np.array([0.5, 0.5, 0.5])
+        self.B_MIN = np.array([-0.5, -0.5, -0.55])
+        self.B_MAX = np.array([0.5, 0.5, 0.55])
 
         self.is_train = (phase == 'train')
         self.load_size = self.opt.loadSize
@@ -138,11 +138,16 @@ class TrainDataset(Dataset):
         listAll = os.listdir(self.OBJ)
 
         for subject in listAll:
-            if os.path.exists(os.path.join(self.OBJ, subject, '%s_points.npy' % subject)):
-                if os.path.exists(os.path.join(self.RENDER, subject, '0_0_00.npy')):
-                    all_subjects.append(subject)
+            path = os.path.join(self.OBJ, subject, '%s_sdf.npy' % subject)
+            if os.path.exists(path):
+                testDatatype = np.load(path)
+                if testDatatype.dtype is np.dtype(np.float32):
+                    if os.path.exists(os.path.join(self.RENDER, subject, '0_0_00.npy')):
+                        all_subjects.append(subject)
+                    else:
+                        print("%s has no .npy render!" % subject)
                 else:
-                    print("%s has no .npy render!" % subject)
+                    print("Type is not float32!")
             else:
                 print("%s has no .npy file!" % subject)
 
@@ -325,10 +330,18 @@ class TrainDataset(Dataset):
             points = self.points_dic[subject]
             sdf = self.sdf_dic[subject]
 
-            num = 4 * self.num_sample_inout + self.num_sample_inout // 4
+            #num = 4 * self.num_sample_inout + self.num_sample_inout // 4
+            num = self.num_sample_inout
             index = np.random.choice(sdf.shape[0], num, replace=False)
             sample_points = points[index]
-            inside = np.logical_not(sdf[index])
+            sdf = -sdf[index]
+
+            sdf = np.clip(sdf, -self.opt.sigma, self.opt.sigma)
+            sdf = sdf * (1/self.opt.sigma)
+            sdf = sdf * 0.5 + 0.5
+
+            samples = sample_points.T
+            labels = np.expand_dims(sdf, 0)
         else:
             if subject in self.mesh_dic:
                 mesh = self.mesh_dic[subject]
@@ -349,18 +362,15 @@ class TrainDataset(Dataset):
             inside = mesh.contains(sample_points)
             del mesh
 
-        inside_points = sample_points[inside]
-        outside_points = sample_points[np.logical_not(inside)]
+            inside_points = sample_points[inside]
+            outside_points = sample_points[np.logical_not(inside)]
 
-        nin = inside_points.shape[0]
-        inside_points = inside_points[
-                        :self.num_sample_inout // 2] if nin > self.num_sample_inout // 2 else inside_points
-        outside_points = outside_points[
-                         :self.num_sample_inout // 2] if nin > self.num_sample_inout // 2 else outside_points[
-                                                                                               :(self.num_sample_inout - nin)]
+            nin = inside_points.shape[0]
+            inside_points = inside_points[:self.num_sample_inout // 2] if nin > self.num_sample_inout // 2 else inside_points
+            outside_points = outside_points[:self.num_sample_inout // 2] if nin > self.num_sample_inout // 2 else outside_points[:(self.num_sample_inout - nin)]
 
-        samples = np.concatenate([inside_points, outside_points], 0).T
-        labels = np.concatenate([np.ones((1, inside_points.shape[0])), np.zeros((1, outside_points.shape[0]))], 1)
+            samples = np.concatenate([inside_points, outside_points], 0).T
+            labels = np.concatenate([np.ones((1, inside_points.shape[0])), np.zeros((1, outside_points.shape[0]))], 1)
 
         #save_samples_truncted_prob('out_{0}_old.ply'.format(subject), samples.T, labels.T)
         #exit(0)

@@ -49,7 +49,6 @@ class HGPIFuNet(BasePIFuNet):
         self.im_feat_list = []
         self.tmpx = None
         self.normx = None
-        self.images = None
 
         self.intermediate_preds_list = []
 
@@ -61,10 +60,10 @@ class HGPIFuNet(BasePIFuNet):
         store all intermediate features.
         :param images: [B, C, H, W] input images
         '''
-        self.im_feat_list, self.tmpx, self.normx, self.images = self.image_filter(images)
+        self.im_feat_list, self.tmpx, self.normx = self.image_filter(images)
         # If it is not in training, only produce the last im_feat
-        # if not self.training:
-        self.im_feat_list = [self.im_feat_list[-1]]
+        if not self.training:
+            self.im_feat_list = [self.im_feat_list[-1]]
 
     def query(self, points, calibs, transforms=None, labels=None):
         '''
@@ -95,21 +94,21 @@ class HGPIFuNet(BasePIFuNet):
 
         for im_feat in self.im_feat_list:
             # [B, Feat_i + z, N]
-            #point_local_feat_list = [self.index(im_feat, xy), z_feat]
             point_local_feat = self.index(im_feat, xy)
-            point_img = self.index(self.images, xy)
 
             #if self.opt.skip_hourglass:
                 #point_local_feat_list.append(tmpx_local_feature)
 
             #point_local_feat = torch.cat(point_local_feat_list, 1)
 
-            total = torch.cat([point_local_feat, points, point_img], 1)
+            total = point_local_feat
+            #total = torch.cat([point_local_feat, points[::self.num_views, :, :]], 1)
 
             # out of image plane is always set to 0
             #print(point_local_feat.shape)
 
             multi = total.view(points.shape[0]//self.num_views, -1, points.shape[2])
+            multi = torch.cat([multi, points[::self.num_views, :, :]], dim=1)
             #print(multi.shape)
             pred = self.surface_classifier(multi)
             #pred = in_img[:, None].float() * self.surface_classifier(multi)

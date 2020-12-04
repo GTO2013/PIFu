@@ -149,29 +149,7 @@ def rotateBand2(x, R):
 
     return dst
 
-def centerAndNormalizeMesh(mesh):
-    if isinstance(mesh, trimesh.Scene):
-        mesh = mesh.dump().sum()
 
-    extends = mesh.extents
-    vmin = mesh.vertices.min(0)
-    vmax = mesh.vertices.max(0)
-    center = (vmin+vmax)*0.5
-
-    m = trimesh.transformations.translation_matrix(-center)
-    meshPre = mesh.apply_transform(m)
-    m = trimesh.transformations.scale_matrix(1/np.max(extends))
-    mesh = meshPre.apply_transform(m)
-
-    return mesh
-
-def normalize_v3(arr):
-    ''' Normalize a numpy array of 3 component vectors shape=(n,3) '''
-    lens = np.sqrt( arr[:,0]**2 + arr[:,1]**2 + arr[:,2]**2)
-    arr[:,0] /= lens
-    arr[:,1] /= lens
-    arr[:,2] /= lens
-    return arr
 
 def render_prt_ortho(out_path, folder_name, view_dir, subject_name, shs, rndr, rndr_uv, im_size, angl_step=4, n_light=1, pitch=[0]):
     cam = Camera(width=im_size, height=im_size)
@@ -180,83 +158,11 @@ def render_prt_ortho(out_path, folder_name, view_dir, subject_name, shs, rndr, r
     cam.far = 1000
     cam.sanity_check()
 
-    if not os.path.isfile(os.path.join(view_dir, "top_Blueprint.npy")):
-        print("No views for {0}, Skipping!".format(subject_name))
-        return
-
     # set path for obj, prt
-    mesh_file = os.path.join(folder_name, subject_name + "_100k.obj")
     baseNewPath = os.path.join(out_path, 'GEO', 'OBJ', subject_name)
     newPath = os.path.join(baseNewPath, subject_name + "_100k.obj")
 
-    if not os.path.exists(mesh_file):
-        print('ERROR: obj file does not exist!!', mesh_file)
-        return 
-    prt_file = os.path.join(folder_name, 'bounce', 'bounce0.txt')
-    if not os.path.exists(prt_file):
-        print('ERROR: prt file does not exist!!!', prt_file)
-        return
-    face_prt_file = os.path.join(folder_name, 'bounce', 'face.npy')
-    if not os.path.exists(face_prt_file):
-        print('ERROR: face prt file does not exist!!!', prt_file)
-        return
-
-    os.makedirs(os.path.join(out_path, 'GEO', 'OBJ', subject_name), exist_ok=True)
-    os.makedirs(os.path.join(out_path, 'PARAM', subject_name), exist_ok=True)
-    os.makedirs(os.path.join(out_path, 'RENDER', subject_name), exist_ok=True)
-    os.makedirs(os.path.join(out_path, 'MASK', subject_name), exist_ok=True)
-    os.makedirs(os.path.join(out_path, 'UV_RENDER', subject_name), exist_ok=True)
-    os.makedirs(os.path.join(out_path, 'UV_MASK', subject_name), exist_ok=True)
-    os.makedirs(os.path.join(out_path, 'UV_POS', subject_name), exist_ok=True)
-    os.makedirs(os.path.join(out_path, 'UV_NORMAL', subject_name), exist_ok=True)
-
-    copy = True
-    if copy:
-        basePathRender = os.path.join(out_path, 'RENDER',  subject_name)
-
-        topFrom = os.path.join(os.path.join(view_dir, "top_Blueprint.npy"))
-        topTo = os.path.join(os.path.join(basePathRender, "90_90_00.npy"))
-        sideFrom = os.path.join(os.path.join(view_dir, "side_Blueprint.npy"))
-        sideTo = os.path.join(os.path.join(basePathRender, "90_0_00.npy"))
-        frontFrom = os.path.join(os.path.join(view_dir, "front_Blueprint.npy"))
-        fromTo = os.path.join(os.path.join(basePathRender, "180_0_00.npy"))
-        backFrom = os.path.join(os.path.join(view_dir, "back_Blueprint.npy"))
-        backTo = os.path.join(os.path.join(basePathRender, "0_0_00.npy"))
-
-        topF = cv2.flip(np.load(topFrom), 1)
-        sideF = cv2.flip(np.load(sideFrom), 1)
-        np.save(topTo, topF)
-        np.save(sideTo, sideF)
-        #shutil.copy(topFrom, topTo)
-        #shutil.copy(sideFrom, sideTo)
-        shutil.copy(frontFrom, fromTo)
-        shutil.copy(backFrom, backTo)
-
-        print("Copied to {0} ".format(basePathRender))
-
-    exit(0)
-    meshNew = trimesh.load_mesh(mesh_file)
-    meshNew = centerAndNormalizeMesh(meshNew)
-    meshNew.export(newPath)
-    points, sdf = mesh_to_sdf.sample_sdf_near_surface(meshNew,  number_of_points=100000)
-    outPathPoints = os.path.join(os.path.join(baseNewPath, subject_name + "_points"))
-    outPathSDF = os.path.join(os.path.join(baseNewPath, subject_name + "_sdf"))
-
-    np.save(outPathPoints, points)
-    np.save(outPathSDF, sdf > 0)
-
-    exit(0)
-    #colors = np.zeros(points.shape)
-    #colors[sdf > 0,2] = 1
-    #colors[sdf < 0,0] = 1
-    #cloud = pyrender.Mesh.from_points(points, colors=colors)
-    #scene = pyrender.Scene()
-    #scene.add(cloud)
-    #viewer = pyrender.Viewer(scene, use_raymond_lighting=True, point_size = 2)
-    #exit(0)
-
     vertices, faces = load_obj_mesh(newPath, with_normal=False, with_texture=False)
-    #os.remove(tempPath)
 
     vmin = vertices.min(0)
     vmax = vertices.max(0)
@@ -272,7 +178,7 @@ def render_prt_ortho(out_path, folder_name, view_dir, subject_name, shs, rndr, r
     rndr.set_norm_mat(y_scale, vmed)
     #rndr_uv.set_norm_mat(y_scale, vmed)
 
-    prt = np.loadtxt(prt_file)
+    #prt = np.loadtxt(prt_file)
 
     textures = None
     face_textures = None
@@ -280,8 +186,10 @@ def render_prt_ortho(out_path, folder_name, view_dir, subject_name, shs, rndr, r
     faces_normals = None
     tan = None
     bitan = None
-    
-    face_prt = np.load(face_prt_file)  
+    face_prt = None
+    prt = None
+
+    #face_prt = np.load(face_prt_file)
     rndr.set_mesh(vertices, faces, normals, faces_normals, textures, face_textures, prt, face_prt, tan, bitan)
 
     #rndr_uv.set_mesh(vertices, faces, normals, faces_normals, textures, face_textures, prt, face_prt, tan, bitan)
@@ -365,15 +273,12 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     # NOTE: GL context has to be created before any other OpenGL function loads.   
-    #from lib.renderer.gl.init_gl import initialize_GL_context
-    #initialize_GL_context(width=args.size, height=args.size, egl=args.egl)
+    from lib.renderer.gl.init_gl import initialize_GL_context
+    initialize_GL_context(width=args.size, height=args.size, egl=args.egl)
 
-    #from lib.renderer.gl.prt_render import PRTRender
-    #rndr = PRTRender(width=args.size, height=args.size, ms_rate=args.ms_rate, egl=args.egl)
-    #rndr_uv = PRTRender(width=args.size, height=args.size, uv_mode=True, egl=args.egl)
-
-    rndr = None
-    rndr_uv = None
+    from lib.renderer.gl.prt_render import PRTRender
+    rndr = PRTRender(width=args.size, height=args.size, ms_rate=args.ms_rate, egl=args.egl)
+    rndr_uv = PRTRender(width=args.size, height=args.size, uv_mode=True, egl=args.egl)
 
     p = pathlib.Path(args.input).name
     viewDir = os.path.join(args.view_dir, p)
