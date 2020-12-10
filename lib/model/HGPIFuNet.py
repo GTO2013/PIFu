@@ -24,7 +24,8 @@ class HGPIFuNet(BasePIFuNet):
     def __init__(self,
                  opt,
                  projection_mode='orthogonal',
-                 error_term=nn.MSELoss(),
+                 #error_term=nn.MSELoss(),
+                 error_term = nn.SmoothL1Loss(beta=0.001)
                  ):
         super(HGPIFuNet, self).__init__(
             projection_mode=projection_mode,

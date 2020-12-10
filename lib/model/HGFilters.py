@@ -66,7 +66,7 @@ class HGFilter(nn.Module):
 
         # Base part
         #self.conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=1 if self.opt.skip_downsample else 2, padding=3)
-        self.conv1 = nn.Conv2d(1, 64, kernel_size=3, stride=1 if self.opt.skip_downsample else 2, padding=1)
+        self.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1 if self.opt.skip_downsample else 2, padding=1)
 
         if self.opt.norm == 'batch':
             self.bn1 = nn.BatchNorm2d(64)
@@ -85,7 +85,7 @@ class HGFilter(nn.Module):
             else:
                 raise NameError('Unknown Fan Filter setting!')
         dim = 64
-        groupNormSize = 8 #32 Before
+        groupNormSize = 16 #32 Before
 
         self.conv3 = ConvBlock(dim, 128, self.opt.norm, groupNormSize)
         self.conv4 = ConvBlock(128, self.opt.hourglass_dim_internal, self.opt.norm, groupNormSize)

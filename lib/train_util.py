@@ -61,7 +61,7 @@ def gen_mesh(opt, net, cuda, data, save_path, use_octree=True):
             save_img_list.append(save_img)
 
         save_img = np.concatenate(save_img_list, axis=1)
-        Image.fromarray(np.uint8(save_img[:, :, 0]), mode='L').save(save_img_path)
+        Image.fromarray(np.uint8(save_img[:, :, :]), mode='RGB').save(save_img_path)
 
         #Image.fromarray(np.uint8(save_img[:,:,::-1])).save(save_img_path)
 

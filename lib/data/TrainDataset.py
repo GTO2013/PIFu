@@ -204,9 +204,9 @@ class TrainDataset(Dataset):
 
             #print((vid,pitch))
             param_path = os.path.join(self.PARAM, subject, '%d_%d_%02d.npy' % (vid, pitch, 0))
-            #render_path = os.path.join(self.RENDER, subject, '%d_%d_%02d.jpg' % (vid, pitch, 0))
-            render_path = os.path.join(self.RENDER, subject, '%d_%d_%02d.npy' % (vid, pitch, 0))
-            mask_path = os.path.join(self.MASK, subject, '%d_%d_%02d.png' % (vid, pitch, 0))
+            render_path = os.path.join(self.RENDER, subject, '%d_%d_%02d.jpg' % (vid, pitch, 0))
+            #render_path = os.path.join(self.RENDER, subject, '%d_%d_%02d.npy' % (vid, pitch, 0))
+            #mask_path = os.path.join(self.MASK, subject, '%d_%d_%02d.png' % (vid, pitch, 0))
 
             # loading calibration data
             param = np.load(param_path, allow_pickle=True)
@@ -235,21 +235,21 @@ class TrainDataset(Dataset):
             # Transform under image pixel space
             trans_intrinsic = np.identity(4)
 
-            mask = Image.open(mask_path).convert('L')
-            dataRen = np.load(render_path)
-            render = Image.fromarray(dataRen, mode='L')
+            #mask = Image.open(mask_path).convert('L')
+            #dataRen = np.load(render_path)
+            #render = Image.fromarray(dataRen, mode='L')
 
             #render = Image.open(render_path).convert('L')
-            #render = Image.open(render_path).convert('RGB')
+            render = Image.open(render_path).convert('RGB')
 
             render = render.resize((self.load_size, self.load_size), Image.BILINEAR)
-            mask = mask.resize((self.load_size, self.load_size), Image.BILINEAR)
+            #mask = mask.resize((self.load_size, self.load_size), Image.BILINEAR)
 
             if self.is_train:
                 # Pad images
                 pad_size = int(0.1 * self.load_size)
                 render = ImageOps.expand(render, pad_size, fill=0)
-                mask = ImageOps.expand(mask, pad_size, fill=0)
+                #mask = ImageOps.expand(mask, pad_size, fill=0)
 
                 w, h = render.size
                 th, tw = self.load_size, self.load_size
@@ -258,7 +258,7 @@ class TrainDataset(Dataset):
                 if self.opt.random_flip and np.random.rand() > 0.5:
                     scale_intrinsic[0, 0] *= -1
                     render = transforms.RandomHorizontalFlip(p=1.0)(render)
-                    mask = transforms.RandomHorizontalFlip(p=1.0)(mask)
+                    #mask = transforms.RandomHorizontalFlip(p=1.0)(mask)
 
                 # random scale
                 if self.opt.random_scale:
@@ -266,7 +266,7 @@ class TrainDataset(Dataset):
                     w = int(rand_scale * w)
                     h = int(rand_scale * h)
                     render = render.resize((w, h), Image.BILINEAR)
-                    mask = mask.resize((w, h), Image.NEAREST)
+                    #mask = mask.resize((w, h), Image.NEAREST)
                     scale_intrinsic *= rand_scale
                     scale_intrinsic[3, 3] = 1
 
@@ -287,7 +287,7 @@ class TrainDataset(Dataset):
                 y1 = int(round((h - th) / 2.)) + dy
 
                 render = render.crop((x1, y1, x1 + tw, y1 + th))
-                mask = mask.crop((x1, y1, x1 + tw, y1 + th))
+                #mask = mask.crop((x1, y1, x1 + tw, y1 + th))
 
                 render = self.aug_trans(render)
 
@@ -300,9 +300,9 @@ class TrainDataset(Dataset):
             calib = torch.Tensor(np.matmul(intrinsic, extrinsic)).float()
             extrinsic = torch.Tensor(extrinsic).float()
 
-            mask = transforms.Resize(self.load_size)(mask)
-            mask = transforms.ToTensor()(mask).float()
-            mask_list.append(mask)
+            #mask = transforms.Resize(self.load_size)(mask)
+            #mask = transforms.ToTensor()(mask).float()
+            #mask_list.append(mask)
 
             render = self.to_tensor(render)
             #render = mask.expand_as(render) * render
@@ -315,7 +315,7 @@ class TrainDataset(Dataset):
             'img': torch.stack(render_list, dim=0),
             'calib': torch.stack(calib_list, dim=0),
             'extrinsic': torch.stack(extrinsic_list, dim=0),
-            'mask': torch.stack(mask_list, dim=0)
+            #'mask': torch.stack(mask_list, dim=0)
         }
 
     def select_sampling_method(self, subject):

@@ -15,8 +15,8 @@ def load_chunk(args, foldersLocal, idx, progress):
     for i, model_id in enumerate(foldersLocal):
         progress[idx] = ((i+1) / len(foldersLocal)) * 100
 
-        createDirs(model_id, args)
-        copyRenders(model_id, args)
+        #createDirs(model_id, args)
+        #copyRenders(model_id, args)
 
         job = Process(target=calculateSDF, args=(model_id, args))
         job.start()
@@ -68,7 +68,7 @@ def calculateSDF(model_id, args):
     outPathSDF = os.path.join(os.path.join(baseNewPath, model_id + "_sdf"))
 
     np.save(outPathPoints, points)
-    np.save(outPathSDF, sdf)
+    np.save(outPathSDF, sdf > 0)
     
     del meshNew
     #colors = np.zeros(points.shape)
