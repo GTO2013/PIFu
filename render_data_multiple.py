@@ -152,14 +152,14 @@ if __name__ == '__main__':
 
     #Do the stuff we can do in parallel
     #MeshToSDF already seems to run parallel though
-    preprocess_parallel(args, dirs, num_cpus=2)
+    #preprocess_parallel(args, dirs, num_cpus=2)
 
     #To the stuff we shouldnt  do in parallel
     for idx, d in enumerate(dirs):
         print("------------- {0} / {1} -------------".format(idx, len(dirs)))
 
         arg = os.path.join(args.input, d)
-        #os.system(r'conda activate pifu & python -m apps.render_data -i {0} &'.format(arg))
+        os.system(r'conda activate pifu & python -m apps.render_data -i {0} &'.format(arg))
 
 
 

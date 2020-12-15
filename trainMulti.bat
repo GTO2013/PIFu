@@ -1,1 +1,1 @@
-python -m apps.train_shape --dataroot C:\pifu\trainingData --gpu_id 0 --batch_size 2 --num_sample_inout 10000 --skip_downsample --hourglass_dim_internal 64 --hourglass_dim 32 --resolution 512 --loadSize 256 --num_views 4 --num_threads 6 --random_flip --random_scale
+python -m apps.train_shape --dataroot C:\Blueprint2Car\data --gpu_id 0 --batch_size 2 --num_sample_inout 10000 --skip_downsample --hourglass_dim_internal 64 --hourglass_dim 32 --resolution 256 --loadSize 256 --num_views 4 --num_threads 6

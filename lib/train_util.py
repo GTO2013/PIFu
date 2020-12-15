@@ -7,6 +7,51 @@ import cv2
 from PIL import Image
 from tqdm import tqdm
 
+
+def prepareBatches(batches, cuda, opt):
+    # retrieve the data
+    # image_tensor = train_data['img'].to(device=cuda)
+    image_tensor_list = []
+
+
+    for batch in batches:
+        for img in batch['img']:
+            image_tensor_list.append(img.unsqueeze(0).to(device=cuda))
+
+    train_data = {'calib': [], 'samples': [], 'labels': [], 'size': []}
+
+    for batch in batches:
+        train_data['calib'].append(batch['calib'].unsqueeze(0))
+        train_data['samples'].append(batch['samples'].unsqueeze(0))
+        train_data['labels'].append(batch['labels'].unsqueeze(0))
+        train_data['size'].append(batch['size'].unsqueeze(0))
+
+    train_data['calib'] = torch.cat(train_data['calib'], dim=0)
+    train_data['samples'] = torch.cat(train_data['samples'], dim=0)
+    train_data['labels'] = torch.cat(train_data['labels'], dim=0)
+    train_data['size'] = torch.cat(train_data['size'], dim=0)
+
+    calib_tensor = train_data['calib'].to(device=cuda)
+    sample_tensor = train_data['samples'].to(device=cuda)
+    label_tensor = train_data['labels'].to(device=cuda)
+    size_tensor = train_data['size'].view(opt.num_views * len(batches), 2).to(device=cuda)
+
+    calib_tensor = reshape_multiview_calib_tensor(calib_tensor)
+
+    if opt.num_views > 1:
+        sample_tensor = reshape_sample_tensor(sample_tensor, opt.num_views)
+
+    return image_tensor_list, calib_tensor, sample_tensor, label_tensor, size_tensor
+
+def reshape_multiview_calib_tensor(calib_tensor):
+    calib_tensor = calib_tensor.view(
+        calib_tensor.shape[0] * calib_tensor.shape[1],
+        calib_tensor.shape[2],
+        calib_tensor.shape[3]
+    )
+
+    return calib_tensor
+
 def reshape_multiview_tensors(image_tensor, calib_tensor):
     # Careful here! Because we put single view and multiview together,
     # the returned tensor.shape is 5-dim: [B, num_views, C, W, H]
@@ -26,7 +71,6 @@ def reshape_multiview_tensors(image_tensor, calib_tensor):
 
     return image_tensor, calib_tensor
 
-
 def reshape_sample_tensor(sample_tensor, num_views):
     if num_views == 1:
         return sample_tensor
@@ -42,31 +86,34 @@ def reshape_sample_tensor(sample_tensor, num_views):
 
 
 def gen_mesh(opt, net, cuda, data, save_path, use_octree=True):
-    image_tensor = data['img'].to(device=cuda)
-    calib_tensor = data['calib'].to(device=cuda)
+    batch = [data]
+    image_tensor_list, calib_tensor, sample_tensor, label_tensor, img_sizes = prepareBatches(batch, cuda, opt)
 
-    net.filter(image_tensor)
+    #image_tensor = data['img'].to(device=cuda)
+    #calib_tensor = data['calib'].to(device=cuda)
+
+    net.filter(image_tensor_list)
 
     b_min = data['b_min']
     b_max = data['b_max']
     print("\nMin BB: {0}, Max BB: {1}".format(b_min, b_max))
 
     try:
-        save_img_path = save_path[:-4] + '.png'
-        save_img_list = []
+        #save_img_path = save_path[:-4] + '.png'
+        #save_img_list = []
 
-        for v in range(image_tensor.shape[0]):
-            save_img = (np.transpose(image_tensor[v].detach().cpu().numpy(), (1, 2, 0)) * 0.5 + 0.5) * 255.0
+        #for v in range(image_tensor.shape[0]):
+            #save_img = (np.transpose(image_tensor[v].detach().cpu().numpy(), (1, 2, 0)) * 0.5 + 0.5) * 255.0
             #save_img = (np.transpose(image_tensor[v].detach().cpu().numpy(), (1, 2, 0)) * 0.5 + 0.5)[:, :, ::-1] * 255.0
-            save_img_list.append(save_img)
+            #save_img_list.append(save_img)
 
-        save_img = np.concatenate(save_img_list, axis=1)
-        Image.fromarray(np.uint8(save_img[:, :, :]), mode='RGB').save(save_img_path)
+        #save_img = np.concatenate(save_img_list, axis=1)
+        #Image.fromarray(np.uint8(save_img[:, :, :]), mode='RGB').save(save_img_path)
 
         #Image.fromarray(np.uint8(save_img[:,:,::-1])).save(save_img_path)
 
         verts, faces, _, _ = reconstruction(
-            net, cuda, calib_tensor, opt.resolution, b_min, b_max, use_octree=use_octree)
+            net, cuda, calib_tensor, img_sizes, opt.resolution, b_min, b_max, use_octree=use_octree)
         #verts_tensor = torch.from_numpy(verts.T).unsqueeze(0).to(device=cuda).float()
         #xyz_tensor = net.projection(verts_tensor, calib_tensor[:1])
         #uv = xyz_tensor[:, :2, :]
@@ -153,8 +200,32 @@ def compute_acc(pred, gt, thresh=0.5):
             vol_gt = 1
         return true_pos / union, true_pos / vol_pred, true_pos / vol_gt
 
-
 def calc_error(opt, net, cuda, dataset, num_tests):
+    if num_tests > len(dataset):
+        num_tests = len(dataset)
+    with torch.no_grad():
+        erorr_arr, IOU_arr, prec_arr, recall_arr = [], [], [], []
+        for idx in tqdm(range(num_tests)):
+            data = dataset[idx * len(dataset) // num_tests]
+            batch = [data]
+            image_tensor_list, calib_tensor, sample_tensor, label_tensor, img_sizes = prepareBatches(batch, cuda, opt)
+
+            res, error = net.forward(image_tensor_list, sample_tensor, calib_tensor, imgSizes=img_sizes,
+                                      labels=label_tensor)
+
+            IOU, prec, recall = compute_acc(res, label_tensor)
+
+            # print(
+            #     '{0}/{1} | Error: {2:06f} IOU: {3:06f} prec: {4:06f} recall: {5:06f}'
+            #         .format(idx, num_tests, error.item(), IOU.item(), prec.item(), recall.item()))
+            erorr_arr.append(error.item())
+            IOU_arr.append(IOU.item())
+            prec_arr.append(prec.item())
+            recall_arr.append(recall.item())
+
+    return np.average(erorr_arr), np.average(IOU_arr), np.average(prec_arr), np.average(recall_arr)
+
+def calc_error_backup(opt, net, cuda, dataset, num_tests):
     if num_tests > len(dataset):
         num_tests = len(dataset)
     with torch.no_grad():

@@ -24,8 +24,6 @@ from lib.geometry import index
 # get options
 opt = BaseOptions().parse()
 
-
-
 def train(opt):
     # set cuda
     cuda = torch.device('cuda:%d' % opt.gpu_id)
@@ -50,7 +48,7 @@ def train(opt):
 
     # NOTE: batch size should be 1 and use all the points for evaluation
     test_data_loader = DataLoader(test_dataset,
-                                  batch_size=None, shuffle=False,
+                                  batch_size=1, shuffle=False,
                                   num_workers=opt.num_threads, pin_memory=opt.pin_memory)
     print('test data size: ', len(test_data_loader))
 
@@ -97,18 +95,32 @@ def train(opt):
 
         set_train()
         iter_data_time = time.time()
-
-        train_data_loader_iter = iter(train_data_loader)
-        for train_idx in range(0, len(train_data_loader_iter) - opt.batch_size, opt.batch_size):
+        print(len(train_data_loader))
+        for train_idx, train_data in enumerate(train_data_loader):
             iter_start_time = time.time()
-            batches = [next(train_data_loader_iter) for _ in range(opt.batch_size)]
-            image_tensor_list, calib_tensor, sample_tensor, label_tensor, img_sizes = prepareBatches(batches, cuda, opt)
+
+            # retrieve the data
+            #image_tensor = train_data['img'].to(device=cuda)
+            image_tensor_list = []
+
+            for img in train_data['img']:
+                image_tensor_list.append(img.to(device=cuda))
+                print(img.shape)
+
+            calib_tensor = train_data['calib'].to(device=cuda)
+            sample_tensor = train_data['samples'].to(device=cuda)
+            print(len(image_tensor_list))
             #image_tensor, calib_tensor = reshape_multiview_tensors(image_tensor, calib_tensor)
+
+            if opt.num_views > 1:
+                sample_tensor = reshape_sample_tensor(sample_tensor, opt.num_views)
+
+            label_tensor = train_data['labels'].to(device=cuda)
 
             optimizerG.zero_grad()
 
             #with torch.cuda.amp.autocast():
-            res, error = netG.forward(image_tensor_list, sample_tensor, calib_tensor, imgSizes=img_sizes, labels=label_tensor)
+            res, error = netG.forward(image_tensor_list, sample_tensor, calib_tensor, labels=label_tensor)
             #res, error = netG.forward(image_tensor, sample_tensor, calib_tensor, labels=label_tensor)
 
             #scaler.scale(error).backward()
@@ -186,6 +198,7 @@ def train(opt):
                         opt.results_path, opt.name, epoch, train_data['name'])
                     gen_mesh(opt, netG, cuda, train_data, save_path)
                 train_dataset.is_train = True
+
 
 if __name__ == '__main__':
     train(opt)

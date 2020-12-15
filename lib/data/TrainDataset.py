@@ -1,4 +1,9 @@
+
 from torch.utils.data import Dataset
+import sys
+sys.path.append(r'C:\Blueprint2Car')
+from src.datasetInterfaces import datasetInterfaceUnity, datasetInterfaceProcessed
+from src.utils import viewUtils
 import numpy as np
 import os
 import random
@@ -10,11 +15,11 @@ from PIL.ImageFilter import GaussianBlur
 import trimesh
 import logging
 import psutil
+import math
 from multiprocessing import Manager, Process
 
 log = logging.getLogger('trimesh')
 log.setLevel(40)
-
 
 def load_chunk(root_dir, foldersLocal, meshs, sdf):
 
@@ -24,8 +29,8 @@ def load_chunk(root_dir, foldersLocal, meshs, sdf):
             if sdf is None:
                 meshs[sub_name] = trimesh.load(os.path.join(root_dir, sub_name, '%s_100k.obj' % sub_name))
             else:
-                meshs[sub_name] = np.load(os.path.join(root_dir, sub_name, '%s_points.npy' % sub_name))
-                sdf[sub_name] = np.load(os.path.join(root_dir, sub_name, '%s_sdf.npy' % sub_name))
+                meshs[sub_name] = np.load(os.path.join(root_dir, sub_name, 'points.npy'))
+                sdf[sub_name] = np.load(os.path.join(root_dir, sub_name, 'sdf.npy'))
         else:
             print("Stopping, running out of memory soon. Rest will be streamed from disc.")
             break
@@ -73,6 +78,39 @@ def save_samples_truncted_prob(fname, points, prob):
                       )
 
 
+def make_rotate(rx, ry, rz):
+    sinX = np.sin(rx)
+    sinY = np.sin(ry)
+    sinZ = np.sin(rz)
+
+    cosX = np.cos(rx)
+    cosY = np.cos(ry)
+    cosZ = np.cos(rz)
+
+    Rx = np.zeros((3,3))
+    Rx[0, 0] = 1.0
+    Rx[1, 1] = cosX
+    Rx[1, 2] = -sinX
+    Rx[2, 1] = sinX
+    Rx[2, 2] = cosX
+
+    Ry = np.zeros((3,3))
+    Ry[0, 0] = cosY
+    Ry[0, 2] = sinY
+    Ry[1, 1] = 1.0
+    Ry[2, 0] = -sinY
+    Ry[2, 2] = cosY
+
+    Rz = np.zeros((3,3))
+    Rz[0, 0] = cosZ
+    Rz[0, 1] = -sinZ
+    Rz[1, 0] = sinZ
+    Rz[1, 1] = cosZ
+    Rz[2, 2] = 1.0
+
+    R = np.matmul(np.matmul(Rz,Ry),Rx)
+    return R
+
 class TrainDataset(Dataset):
     @staticmethod
     def modify_commandline_options(parser, is_train):
@@ -81,24 +119,28 @@ class TrainDataset(Dataset):
     def __init__(self, opt, phase='train'):
         self.opt = opt
         self.projection_mode = 'orthogonal'
+        self.is_train = (phase == 'train')
+
+        sub_dir = "training" if self.is_train else "test"
+
+        self.use_normals = True
 
         # Path setup
-        self.root = self.opt.dataroot
-        self.RENDER = os.path.join(self.root, 'RENDER')
-        self.MASK = os.path.join(self.root, 'MASK')
-        self.PARAM = os.path.join(self.root, 'PARAM')
-        self.UV_MASK = os.path.join(self.root, 'UV_MASK')
-        self.UV_NORMAL = os.path.join(self.root, 'UV_NORMAL')
-        self.UV_RENDER = os.path.join(self.root, 'UV_RENDER')
-        self.UV_POS = os.path.join(self.root, 'UV_POS')
-        self.OBJ = os.path.join(self.root, 'GEO', 'OBJ')
+        self.root = os.path.join(self.opt.dataroot, sub_dir)
+
+        #self.RENDER = os.path.join(self.root, 'RENDER')
+        #self.MASK = os.path.join(self.root, 'MASK')
+        #self.PARAM = os.path.join(self.root, 'PARAM')
+        #self.UV_MASK = os.path.join(self.root, 'UV_MASK')
+        #self.UV_NORMAL = os.path.join(self.root, 'UV_NORMAL')
+        #self.UV_RENDER = os.path.join(self.root, 'UV_RENDER')
+        #self.UV_POS = os.path.join(self.root, 'UV_POS')
+        #self.OBJ = os.path.join(self.root, 'GEO', 'OBJ')
 
         self.B_MIN = np.array([-0.5, -0.5, -0.55])
         self.B_MAX = np.array([0.5, 0.5, 0.55])
 
-        self.is_train = (phase == 'train')
         self.load_size = self.opt.loadSize
-
         self.num_views = self.opt.num_views
 
         self.num_sample_inout = self.opt.num_sample_inout
@@ -110,10 +152,10 @@ class TrainDataset(Dataset):
 
         # PIL to tensor
         self.to_tensor = transforms.Compose([
-            transforms.Resize(self.load_size),
+            #transforms.Resize(self.load_size),
             transforms.ToTensor(),
-            transforms.Normalize(0.5, 0.5)
-            #transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+            #transforms.Normalize(0.5, 0.5)
+            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
         ])
 
         # augmentation
@@ -127,7 +169,7 @@ class TrainDataset(Dataset):
         self.points_dic = None
         self.sdf_dic = None
 
-        points, sdf = load_trimesh(self.OBJ, self.subjects, loadSdf=self.loadSdf)
+        points, sdf = load_trimesh(self.root, self.subjects, loadSdf=self.loadSdf)
         self.points_dic = points
         self.sdf_dic = sdf
 
@@ -135,33 +177,55 @@ class TrainDataset(Dataset):
         #all_subjects = os.listdir(self.OBJ)
 
         all_subjects = []
-        listAll = os.listdir(self.OBJ)
+        listAll = os.listdir(self.root)
+
+        if(self.opt.max_train_size > 0):
+            listAll = listAll[:min(len(listAll), self.opt.max_train_size)]
 
         for subject in listAll:
-            path = os.path.join(self.OBJ, subject, '%s_sdf.npy' % subject)
+            path = os.path.join(self.root, subject, 'sdf.npy')
             if os.path.exists(path):
                 testDatatype = np.load(path)
-                if testDatatype.dtype is np.dtype(np.float32):
-                    if os.path.exists(os.path.join(self.RENDER, subject, '0_0_00.npy')):
+                if testDatatype.dtype is np.dtype(np.bool):
+                    if os.path.exists(os.path.join(self.root, subject, 'top_Normals.npy' if self.use_normals else 'top_Blueprint.npy')):
                         all_subjects.append(subject)
                     else:
                         print("%s has no .npy render!" % subject)
                 else:
-                    print("Type is not float32!")
+                    print("Type is not bool!")
             else:
-                print("%s has no .npy file!" % subject)
+                print("%s has no sdf file!" % subject)
 
-        var_subjects = np.loadtxt(os.path.join(self.root, 'val.txt'), dtype=str)
-        if len(var_subjects) == 0:
-            return all_subjects
+        #var_subjects = np.loadtxt(os.path.join(self.root, 'val.txt'), dtype=str)
 
-        if self.is_train:
-            return sorted(list(set(all_subjects) - set(var_subjects)))
-        else:
-            return sorted(list(var_subjects))
+        #if len(var_subjects) == 0:
+            #return all_subjects
+
+        #if self.is_train:
+            #return sorted(list(set(all_subjects) - set(var_subjects)))
+        #else:
+            #return sorted(list(var_subjects))
+
+        return all_subjects
 
     def __len__(self):
-        return len(self.subjects)# * len(self.yaw_list) * len(self.pitch_list)
+        return len(self.subjects) # * len(self.yaw_list) * len(self.pitch_list)
+
+    def angles_to_name(self, yaw, pitch):
+        if yaw == 0 and pitch == 0:
+            return "back"
+        elif yaw == 90 and pitch == 0:
+            return "side"
+        elif yaw == 180 and pitch == 0:
+            return "front"
+        elif yaw == 90 and pitch == 90:
+            return "top"
+        else:
+            return '%d_%d_%02d' % (yaw, pitch, 0)
+
+
+    def make_divisible(self, x, div):
+        return int(((x // div) + 1) * div)
 
     def get_render(self, subject, num_views, yid=0, pid=0, random_sample=False):
         '''
@@ -185,39 +249,77 @@ class TrainDataset(Dataset):
             #view_ids = np.random.choice(self.yaw_list, num_views, replace=False)
 
         if num_views == 4:
-            view_ids = [0, 90, 90, 180]
+            yaw_list = [0, 90, 90, 180]
         elif num_views == 3:
-            view_ids = [0, 90, 180]
+            yaw_list = [0, 90, 180]
         else:
-            view_ids = [90]
+            yaw_list = [90]
         
         calib_list = []
         render_list = []
         mask_list = []
+        size_list = []
         extrinsic_list = []
 
-        for idx, vid in enumerate(view_ids):
+        sample_path = os.path.join(self.root, subject)
+        if self.use_normals:
+            views = datasetInterfaceProcessed.getViewsNormals(sample_path)
+        else:
+            views = datasetInterfaceProcessed.getViewsBlueprint(sample_path)
+
+        views = viewUtils.resizeSquareViews(views, self.load_size)
+        bb = datasetInterfaceUnity.getBoundingBox(sample_path)
+        views = viewUtils.trimViewsByBB(views, bb)
+
+        for key in views:
+            div = 32
+            width = views[key].shape[1]
+            height = views[key].shape[0]
+            newWidth = width
+            newHeight = height
+
+            diffWidth = 0
+            diffHeight = 0
+            if width % div != 0:
+                newWidth = self.make_divisible(width, div)
+                diffWidth = (newWidth - width) //2
+
+            if height % div != 0:
+                newHeight = self.make_divisible(height, div)
+                diffHeight = (newHeight - height) //2
+
+            newImg = np.zeros((newHeight, newWidth, 3 if self.use_normals else 1), np.uint8)
+            newImg[diffHeight:height+diffHeight, diffWidth:width + diffWidth, :] = views[key]
+            views[key] = newImg
+
+        for idx, yaw in enumerate(yaw_list):
             pitch = 0
             
             if num_views == 4 and idx == 2:
                 pitch = 90
 
-            #print((vid,pitch))
-            param_path = os.path.join(self.PARAM, subject, '%d_%d_%02d.npy' % (vid, pitch, 0))
-            render_path = os.path.join(self.RENDER, subject, '%d_%d_%02d.jpg' % (vid, pitch, 0))
-            #render_path = os.path.join(self.RENDER, subject, '%d_%d_%02d.npy' % (vid, pitch, 0))
+            poseName = self.angles_to_name(yaw, pitch)
+            #param_path = os.path.join(self.PARAM, subject, '%d_%d_%02d.npy' % (yaw, pitch, 0))
+            #render_path = os.path.join(self.RENDER, subject, '%d_%d_%02d.jpg' % (yaw, pitch, 0))
+            #render_path = os.path.join(sample_path, '%s_%s.npy' % (self.angles_to_name(yaw, pitch),
+                                                                          #"Normals" if self.use_normals else "Blueprint"))
             #mask_path = os.path.join(self.MASK, subject, '%d_%d_%02d.png' % (vid, pitch, 0))
 
             # loading calibration data
-            param = np.load(param_path, allow_pickle=True)
+            #param = np.load(param_path, allow_pickle=True)
             # pixel unit / world unit
-            ortho_ratio = param.item().get('ortho_ratio')
+            #ortho_ratio = param.item().get('ortho_ratio')
             # world unit / model unit
-            scale = param.item().get('scale') * (self.opt.loadSize/512)
+            #scale = param.item().get('scale') * (self.opt.loadSize/512)
             # camera center world coordinate
-            center = param.item().get('center')
+            #center = param.item().get('center')
             # model rotation
-            R = param.item().get('R')
+            #R = param.item().get('R')
+
+            ortho_ratio = 1.0
+            scale = self.opt.loadSize
+            center = np.array([0, 0, 0], np.float32)
+            R = np.matmul(make_rotate(math.radians(pitch), 0, 0), make_rotate(0, math.radians(yaw), 0))
 
             translate = -np.matmul(R, center).reshape(3, 1)
             extrinsic = np.concatenate([R, translate], axis=1)
@@ -237,18 +339,22 @@ class TrainDataset(Dataset):
 
             #mask = Image.open(mask_path).convert('L')
             #dataRen = np.load(render_path)
-            #render = Image.fromarray(dataRen, mode='L')
+            #render = Image.fromarray(dataRen, mode='RGB' if self.use_normals else "L")
 
+            render = Image.fromarray(views[poseName], mode='RGB' if self.use_normals else "L")
             #render = Image.open(render_path).convert('L')
-            render = Image.open(render_path).convert('RGB')
+            #render = Image.open(render_path).convert('RGB')
 
-            render = render.resize((self.load_size, self.load_size), Image.BILINEAR)
+            #render = render.resize((self.load_size, self.load_size), Image.BILINEAR)
             #mask = mask.resize((self.load_size, self.load_size), Image.BILINEAR)
+
+            if (yaw == 90 and pitch == 0) or (yaw == 90 and pitch == 90):
+                render = ImageOps.mirror(render)
 
             if self.is_train:
                 # Pad images
-                pad_size = int(0.1 * self.load_size)
-                render = ImageOps.expand(render, pad_size, fill=0)
+                #pad_size = int(0.1 * self.load_size)
+                #render = ImageOps.expand(render, pad_size, fill=0)
                 #mask = ImageOps.expand(mask, pad_size, fill=0)
 
                 w, h = render.size
@@ -262,7 +368,7 @@ class TrainDataset(Dataset):
 
                 # random scale
                 if self.opt.random_scale:
-                    rand_scale = random.uniform(0.9, 1.1)
+                    rand_scale = random.uniform(0.8, 1.2)
                     w = int(rand_scale * w)
                     h = int(rand_scale * h)
                     render = render.resize((w, h), Image.BILINEAR)
@@ -286,7 +392,7 @@ class TrainDataset(Dataset):
                 x1 = int(round((w - tw) / 2.)) + dx
                 y1 = int(round((h - th) / 2.)) + dy
 
-                render = render.crop((x1, y1, x1 + tw, y1 + th))
+                #render = render.crop((x1, y1, x1 + tw, y1 + th))
                 #mask = mask.crop((x1, y1, x1 + tw, y1 + th))
 
                 render = self.aug_trans(render)
@@ -303,18 +409,23 @@ class TrainDataset(Dataset):
             #mask = transforms.Resize(self.load_size)(mask)
             #mask = transforms.ToTensor()(mask).float()
             #mask_list.append(mask)
-
+            size = torch.Tensor([self.opt.loadSize / render.size[0], self.opt.loadSize / render.size[1]])
             render = self.to_tensor(render)
             #render = mask.expand_as(render) * render
 
+            #render_list.append(render)
+            size_list.append(size)
             render_list.append(render)
             calib_list.append(calib)
             extrinsic_list.append(extrinsic)
 
         return {
-            'img': torch.stack(render_list, dim=0),
+            #'img': torch.stack(render_list, dim=0),
+            'img': render_list,
+            'size': torch.stack(size_list, dim=0),
             'calib': torch.stack(calib_list, dim=0),
             'extrinsic': torch.stack(extrinsic_list, dim=0),
+
             #'mask': torch.stack(mask_list, dim=0)
         }
 
@@ -324,29 +435,34 @@ class TrainDataset(Dataset):
             np.random.seed(1991)
             torch.manual_seed(1991)
 
-        bounds = {'b_min': self.B_MIN, 'b_max': self.B_MAX}
+        #bounds = {'b_min': self.B_MIN, 'b_max': self.B_MAX}
+        bb = datasetInterfaceUnity.getBoundingBox(os.path.join(self.root, subject))
+        minBB = np.array([bb['min'][0], bb['min'][1], bb['min'][2] - 0.05])
+        maxBB = np.array([bb['max'][0], bb['max'][1], bb['max'][2] + 0.05])
+        bounds = {'b_min': minBB - 0.5, 'b_max': maxBB - 0.5}
 
         if self.loadSdf:
             points = self.points_dic[subject]
             sdf = self.sdf_dic[subject]
 
-            #num = 4 * self.num_sample_inout + self.num_sample_inout // 4
-            num = self.num_sample_inout
+            num = 4 * self.num_sample_inout + self.num_sample_inout // 4
+            #num = self.num_sample_inout
             index = np.random.choice(sdf.shape[0], num, replace=False)
             sample_points = points[index]
-            sdf = -sdf[index]
+            #sdf_values = sdf[index]
+            inside = np.logical_not(sdf[index])
 
-            sdf = np.clip(sdf, -self.opt.sigma, self.opt.sigma)
-            sdf = sdf * (1/self.opt.sigma)
-            sdf = sdf * 0.5 + 0.5
+            #sdf = np.clip(sdf, -self.opt.sigma, self.opt.sigma)
+            #sdf = sdf * (1/self.opt.sigma)
+            #sdf = sdf * 0.5 + 0.5
 
-            samples = sample_points.T
-            labels = np.expand_dims(sdf, 0)
+            #samples = sample_points.T
+            #labels = np.expand_dims(sdf, 0)
         else:
             if subject in self.mesh_dic:
                 mesh = self.mesh_dic[subject]
             else:
-                mesh = trimesh.load(os.path.join(self.OBJ, subject, '%s_100k.obj' % subject))
+                mesh = trimesh.load(os.path.join(self.root, subject, '%s_100k.obj' % subject))
 
             #bounds = {'b_min': -mesh.extents/2, 'b_max': mesh.extents/2}
             surface_points, _ = trimesh.sample.sample_surface(mesh, 4 * self.num_sample_inout)
@@ -362,15 +478,15 @@ class TrainDataset(Dataset):
             inside = mesh.contains(sample_points)
             del mesh
 
-            inside_points = sample_points[inside]
-            outside_points = sample_points[np.logical_not(inside)]
+        inside_points = sample_points[inside]
+        outside_points = sample_points[np.logical_not(inside)]
 
-            nin = inside_points.shape[0]
-            inside_points = inside_points[:self.num_sample_inout // 2] if nin > self.num_sample_inout // 2 else inside_points
-            outside_points = outside_points[:self.num_sample_inout // 2] if nin > self.num_sample_inout // 2 else outside_points[:(self.num_sample_inout - nin)]
+        nin = inside_points.shape[0]
+        inside_points = inside_points[:self.num_sample_inout // 2] if nin > self.num_sample_inout // 2 else inside_points
+        outside_points = outside_points[:self.num_sample_inout // 2] if nin > self.num_sample_inout // 2 else outside_points[:(self.num_sample_inout - nin)]
 
-            samples = np.concatenate([inside_points, outside_points], 0).T
-            labels = np.concatenate([np.ones((1, inside_points.shape[0])), np.zeros((1, outside_points.shape[0]))], 1)
+        samples = np.concatenate([inside_points, outside_points], 0).T
+        labels = np.concatenate([np.ones((1, inside_points.shape[0])), np.zeros((1, outside_points.shape[0]))], 1)
 
         #save_samples_truncted_prob('out_{0}_old.ply'.format(subject), samples.T, labels.T)
         #exit(0)
@@ -449,7 +565,7 @@ class TrainDataset(Dataset):
         subject = self.subjects[sid]
         res = {
             'name': subject,
-            'mesh_path': os.path.join(self.OBJ, subject + '.obj'),
+            'mesh_path': os.path.join(self.root, subject + '.obj'),
             'sid': sid,
             'yid': yid,
             'pid': pid,
@@ -466,7 +582,7 @@ class TrainDataset(Dataset):
         res.update(boundingBox)
 
         render_data = self.get_render(subject, num_views=self.num_views, yid=yid, pid=pid,
-                                        random_sample=False)#self.opt.random_multiview)
+                                        random_sample=False)
         res.update(render_data)
 
         # img = np.uint8((np.transpose(render_data['img'][0].numpy(), (1, 2, 0)) * 0.5 + 0.5)[:, :, ::-1] * 255.0)

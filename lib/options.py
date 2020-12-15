@@ -9,8 +9,7 @@ class BaseOptions():
     def initialize(self, parser):
         # Datasets related
         g_data = parser.add_argument_group('Data')
-        g_data.add_argument('--dataroot', type=str, default='./data',
-                            help='path to images (data folder)')
+        g_data.add_argument('--dataroot', type=str, default='./data', help='path to images (data folder)')
 
         g_data.add_argument('--loadSize', type=int, default=512, help='load size of input image')
 
@@ -85,7 +84,7 @@ class BaseOptions():
         # Classification General
         #g_model.add_argument('--mlp_dim', nargs='+', default=[257, 1024, 512, 256, 128, 1], type=int, help='# of dimensions of mlp')
         #g_model.add_argument('--mlp_dim', nargs='+', default=[1027, 1024, 512, 256, 128, 1], type=int, help='# of dimensions of mlp')
-        g_model.add_argument('--mlp_dim', nargs='+', default=[131, 1024, 512, 256, 128, 1], type=int, help='# of dimensions of mlp')
+        g_model.add_argument('--mlp_dim', nargs='+', default=[259, 1024, 512, 256, 128, 1], type=int, help='# of dimensions of mlp')
         g_model.add_argument('--mlp_dim_color', nargs='+', default=[513, 1024, 512, 256, 128, 3],
                              type=int, help='# of dimensions of color mlp')
 
@@ -118,6 +117,7 @@ class BaseOptions():
         parser.add_argument('--results_path', type=str, default='./results', help='path to save results ply')
         parser.add_argument('--load_checkpoint_path', type=str, help='path to save results ply')
         parser.add_argument('--single', type=str, default='', help='single data for training')
+        parser.add_argument('--max_train_size', type=int, default=-1, help='max number of training samples')
         # for single image reconstruction
         parser.add_argument('--mask_path', type=str, help='path for input mask')
         parser.add_argument('--img_path', type=str, help='path for input image')

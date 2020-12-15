@@ -5,7 +5,7 @@ from .sdf import create_grid, eval_grid_octree, eval_grid
 from skimage import measure
 
 
-def reconstruction(net, cuda, calib_tensor,
+def reconstruction(net, cuda, calib_tensor, img_sizes,
                    resolution, b_min, b_max,
                    use_octree=False, num_samples=10000, transform=None):
     '''
@@ -30,7 +30,7 @@ def reconstruction(net, cuda, calib_tensor,
         points = np.expand_dims(points, axis=0)
         points = np.repeat(points, net.num_views, axis=0)
         samples = torch.from_numpy(points).to(device=cuda).float()
-        net.query(samples, calib_tensor)
+        net.query(samples, calib_tensor, img_sizes)
         pred = net.get_preds()[0][0]
         return pred.detach().cpu().numpy()
 
