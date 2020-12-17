@@ -102,13 +102,18 @@ def train(opt):
         for train_idx in range(0, len(train_data_loader_iter) - opt.batch_size, opt.batch_size):
             iter_start_time = time.time()
             batches = [next(train_data_loader_iter) for _ in range(opt.batch_size)]
-            image_tensor_list, calib_tensor, sample_tensor, label_tensor, img_sizes = prepareBatches(batches, cuda, opt)
+
+            image_tensor_list, calib_tensor, sample_tensor, label_tensor,\
+            img_sizes, points_nml, labels_nml = prepareBatches(batches, cuda, opt)
+
             #image_tensor, calib_tensor = reshape_multiview_tensors(image_tensor, calib_tensor)
 
             optimizerG.zero_grad()
 
             #with torch.cuda.amp.autocast():
-            res, error = netG.forward(image_tensor_list, sample_tensor, calib_tensor, imgSizes=img_sizes, labels=label_tensor)
+            res, error = netG.forward(image_tensor_list, sample_tensor, calib_tensor, imgSizes=img_sizes,
+                                      labels=label_tensor, points_nml=points_nml, labels_nml=labels_nml)
+
             #res, error = netG.forward(image_tensor, sample_tensor, calib_tensor, labels=label_tensor)
 
             #scaler.scale(error).backward()

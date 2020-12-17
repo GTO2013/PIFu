@@ -30,7 +30,7 @@ def load_chunk(root_dir, foldersLocal, meshs, sdf):
                 meshs[sub_name] = trimesh.load(os.path.join(root_dir, sub_name, '%s_100k.obj' % sub_name))
             else:
                 meshs[sub_name] = np.load(os.path.join(root_dir, sub_name, 'points.npy'))
-                sdf[sub_name] = np.load(os.path.join(root_dir, sub_name, 'sdf.npy'))
+                sdf[sub_name] = np.load(os.path.join(root_dir, sub_name, 'sdf.npy')) < 0
         else:
             print("Stopping, running out of memory soon. Rest will be streamed from disc.")
             break
@@ -186,13 +186,13 @@ class TrainDataset(Dataset):
             path = os.path.join(self.root, subject, 'sdf.npy')
             if os.path.exists(path):
                 testDatatype = np.load(path)
-                if testDatatype.dtype is np.dtype(np.bool):
+                if testDatatype.dtype is np.dtype(np.float):
                     if os.path.exists(os.path.join(self.root, subject, 'top_Normals.npy' if self.use_normals else 'top_Blueprint.npy')):
                         all_subjects.append(subject)
                     else:
                         print("%s has no .npy render!" % subject)
                 else:
-                    print("Type is not bool!")
+                    print("Type is not float!")
             else:
                 print("%s has no sdf file!" % subject)
 
@@ -445,12 +445,15 @@ class TrainDataset(Dataset):
             points = self.points_dic[subject]
             sdf = self.sdf_dic[subject]
 
+            normals_points = np.load(os.path.join(self.root_dir, subject, 'points_Normals.npy'))
+            normals = np.load(os.path.join(self.root_dir, subject, 'Normals.npy'))
+
             num = 4 * self.num_sample_inout + self.num_sample_inout // 4
             #num = self.num_sample_inout
             index = np.random.choice(sdf.shape[0], num, replace=False)
             sample_points = points[index]
             #sdf_values = sdf[index]
-            inside = np.logical_not(sdf[index])
+            inside = sdf[index]
 
             #sdf = np.clip(sdf, -self.opt.sigma, self.opt.sigma)
             #sdf = sdf * (1/self.opt.sigma)
@@ -496,62 +499,10 @@ class TrainDataset(Dataset):
 
         return {
             'samples': samples,
-            'labels': labels
+            'labels': labels,
+            'samples_normals': normals_points,
+            'normals': normals
         }, bounds
-
-    def get_color_sampling(self, subject, yid, pid=0):
-        yaw = self.yaw_list[yid]
-        pitch = self.pitch_list[pid]
-        uv_render_path = os.path.join(self.UV_RENDER, subject, '%d_%d_%02d.jpg' % (yaw, pitch, 0))
-        uv_mask_path = os.path.join(self.UV_MASK, subject, '%02d.png' % (0))
-        uv_pos_path = os.path.join(self.UV_POS, subject, '%02d.exr' % (0))
-        uv_normal_path = os.path.join(self.UV_NORMAL, subject, '%02d.png' % (0))
-
-        # Segmentation mask for the uv render.
-        # [H, W] bool
-        uv_mask = cv2.imread(uv_mask_path)
-        uv_mask = uv_mask[:, :, 0] != 0
-        # UV render. each pixel is the color of the point.
-        # [H, W, 3] 0 ~ 1 float
-        uv_render = cv2.imread(uv_render_path)
-        uv_render = cv2.cvtColor(uv_render, cv2.COLOR_BGR2RGB) / 255.0
-
-        # Normal render. each pixel is the surface normal of the point.
-        # [H, W, 3] -1 ~ 1 float
-        uv_normal = cv2.imread(uv_normal_path)
-        uv_normal = cv2.cvtColor(uv_normal, cv2.COLOR_BGR2RGB) / 255.0
-        uv_normal = 2.0 * uv_normal - 1.0
-        # Position render. each pixel is the xyz coordinates of the point
-        uv_pos = cv2.imread(uv_pos_path, 2 | 4)[:, :, ::-1]
-
-        ### In these few lines we flattern the masks, positions, and normals
-        uv_mask = uv_mask.reshape((-1))
-        uv_pos = uv_pos.reshape((-1, 3))
-        uv_render = uv_render.reshape((-1, 3))
-        uv_normal = uv_normal.reshape((-1, 3))
-
-        surface_points = uv_pos[uv_mask]
-        surface_colors = uv_render[uv_mask]
-        surface_normal = uv_normal[uv_mask]
-
-        if self.num_sample_color:
-            sample_list = random.sample(range(0, surface_points.shape[0] - 1), self.num_sample_color)
-            surface_points = surface_points[sample_list].T
-            surface_colors = surface_colors[sample_list].T
-            surface_normal = surface_normal[sample_list].T
-
-        # Samples are around the true surface with an offset
-        normal = torch.Tensor(surface_normal).float()
-        samples = torch.Tensor(surface_points).float() \
-                  + torch.normal(mean=torch.zeros((1, normal.size(1))), std=self.opt.sigma).expand_as(normal) * normal
-
-        # Normalized to [-1, 1]
-        rgbs_color = 2.0 * torch.Tensor(surface_colors).float() - 1.0
-
-        return {
-            'color_samples': samples,
-            'rgbs': rgbs_color
-        }
 
     def get_item(self, index):
         # In case of a missing file or IO error, switch to a random sample instead

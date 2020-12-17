@@ -13,26 +13,31 @@ def prepareBatches(batches, cuda, opt):
     # image_tensor = train_data['img'].to(device=cuda)
     image_tensor_list = []
 
-
     for batch in batches:
         for img in batch['img']:
             image_tensor_list.append(img.unsqueeze(0).to(device=cuda))
 
-    train_data = {'calib': [], 'samples': [], 'labels': [], 'size': []}
+    train_data = {'calib': [], 'samples': [], 'labels': [], 'size': [], 'samples_normals': [], 'normals': []}
 
     for batch in batches:
         train_data['calib'].append(batch['calib'].unsqueeze(0))
         train_data['samples'].append(batch['samples'].unsqueeze(0))
         train_data['labels'].append(batch['labels'].unsqueeze(0))
         train_data['size'].append(batch['size'].unsqueeze(0))
+        train_data['samples_normals'].append(batch['samples_normals'].unsqueeze(0))
+        train_data['normals'].append(batch['normals'].unsqueeze(0))
 
     train_data['calib'] = torch.cat(train_data['calib'], dim=0)
     train_data['samples'] = torch.cat(train_data['samples'], dim=0)
     train_data['labels'] = torch.cat(train_data['labels'], dim=0)
     train_data['size'] = torch.cat(train_data['size'], dim=0)
+    train_data['samples_normals'] = torch.cat(train_data['samples_normals'], dim=0)
+    train_data['normals'] = torch.cat(train_data['normals'], dim=0)
 
     calib_tensor = train_data['calib'].to(device=cuda)
     sample_tensor = train_data['samples'].to(device=cuda)
+    sample_normals_tensor = train_data['samples_normals'].to(device=cuda)
+    normals_tensor = train_data['normals'].to(device=cuda)
     label_tensor = train_data['labels'].to(device=cuda)
     size_tensor = train_data['size'].view(opt.num_views * len(batches), 2).to(device=cuda)
 
@@ -40,8 +45,9 @@ def prepareBatches(batches, cuda, opt):
 
     if opt.num_views > 1:
         sample_tensor = reshape_sample_tensor(sample_tensor, opt.num_views)
+        sample_normals_tensor = reshape_sample_tensor(sample_normals_tensor, opt.num_views)
 
-    return image_tensor_list, calib_tensor, sample_tensor, label_tensor, size_tensor
+    return image_tensor_list, calib_tensor, sample_tensor, label_tensor, size_tensor, sample_normals_tensor, normals_tensor
 
 def reshape_multiview_calib_tensor(calib_tensor):
     calib_tensor = calib_tensor.view(
@@ -83,7 +89,6 @@ def reshape_sample_tensor(sample_tensor, num_views):
         sample_tensor.shape[3]
     )
     return sample_tensor
-
 
 def gen_mesh(opt, net, cuda, data, save_path, use_octree=True):
     batch = [data]
