@@ -8,44 +8,112 @@ from PIL import Image
 from tqdm import tqdm
 
 
+def make_divisible(x, div):
+    return int(((x // div) + 1) * div)
+
+def adjustImageSizesInBatch(batches, div = 16):
+    numBatches = len(batches)
+    numImages = len(batches[0]['img'])
+
+    img_tensor_list = []
+
+    for i in range(numImages):
+        maxWidth = 0
+        maxHeight = 0
+
+        for j in range(numBatches):
+            img = batches[j]['img'][i]
+            width = img.shape[2]
+            height = img.shape[1]
+            maxHeight = max(height, maxHeight)
+            maxWidth = max(width, maxWidth)
+
+        diffWidth = 0
+        diffHeight = 0
+        newWidth = maxWidth
+        newHeight = maxHeight
+
+        if newWidth % div != 0:
+            newWidth = make_divisible(newWidth, div)
+            diffWidth = (newWidth - maxWidth) // 2
+
+        if newHeight % div != 0:
+            newHeight = make_divisible(newHeight, div)
+            diffHeight = (newHeight - maxHeight) // 2
+
+        list_img = []
+        for j in range(numBatches):
+            img = batches[j]['img'][i]
+            width = img.shape[2]
+            height = img.shape[1]
+
+            newImg = np.zeros((batches[j]['img'][i].shape[0], newHeight, newWidth), np.float32)
+            newImg[:, diffHeight:height + diffHeight, diffWidth:width + diffWidth] = img
+
+            list_img.append(newImg)
+
+        tensor = torch.Tensor(np.stack(list_img, axis=0))
+        img_tensor_list.append(tensor)
+
+    return img_tensor_list
+
 def prepareBatches(batches, cuda, opt):
     # retrieve the data
     # image_tensor = train_data['img'].to(device=cuda)
     image_tensor_list = []
+    sizes = []
 
-    for batch in batches:
-        for img in batch['img']:
-            image_tensor_list.append(img.unsqueeze(0).to(device=cuda))
+    for img in adjustImageSizesInBatch(batches):
+        image_tensor_list.append(img.to(device=cuda))
+        size = torch.Tensor([opt.loadSize / img.shape[3], opt.loadSize / img.shape[2]])
+        sizes.append(size)
 
-    train_data = {'calib': [], 'samples': [], 'labels': [], 'size': [], 'samples_normals': [], 'normals': []}
+    train_data = {'calib': [], 'samples': [], 'labels': [], 'samples_normals': [], 'size': [], 'normals': []}
 
     for batch in batches:
         train_data['calib'].append(batch['calib'].unsqueeze(0))
         train_data['samples'].append(batch['samples'].unsqueeze(0))
         train_data['labels'].append(batch['labels'].unsqueeze(0))
-        train_data['size'].append(batch['size'].unsqueeze(0))
-        train_data['samples_normals'].append(batch['samples_normals'].unsqueeze(0))
-        train_data['normals'].append(batch['normals'].unsqueeze(0))
+
+        if batch['samples_normals'] != None:
+            train_data['samples_normals'].append(batch['samples_normals'].unsqueeze(0))
+        else:
+            train_data['samples_normals'] = None
+
+        if batch['normals'] != None:
+            train_data['normals'].append(batch['normals'].unsqueeze(0))
+        else:
+            train_data['normals'] = None
 
     train_data['calib'] = torch.cat(train_data['calib'], dim=0)
     train_data['samples'] = torch.cat(train_data['samples'], dim=0)
     train_data['labels'] = torch.cat(train_data['labels'], dim=0)
-    train_data['size'] = torch.cat(train_data['size'], dim=0)
-    train_data['samples_normals'] = torch.cat(train_data['samples_normals'], dim=0)
-    train_data['normals'] = torch.cat(train_data['normals'], dim=0)
+    train_data['size'] = torch.stack(sizes, dim=0).repeat(len(train_data['calib']), 1)
+
+    if train_data['samples_normals'] != None:
+        train_data['samples_normals'] = torch.cat(train_data['samples_normals'], dim=0)
+        sample_normals_tensor = train_data['samples_normals'].to(device=cuda)
+
+        if opt.num_views > 1:
+            sample_normals_tensor = reshape_sample_tensor(sample_normals_tensor, opt.num_views)
+    else:
+        sample_normals_tensor = None
+
+    if train_data['normals'] != None:
+        train_data['normals'] = torch.cat(train_data['normals'], dim=0)
+        normals_tensor = train_data['normals'].to(device=cuda)
+    else:
+        normals_tensor = None
 
     calib_tensor = train_data['calib'].to(device=cuda)
     sample_tensor = train_data['samples'].to(device=cuda)
-    sample_normals_tensor = train_data['samples_normals'].to(device=cuda)
-    normals_tensor = train_data['normals'].to(device=cuda)
     label_tensor = train_data['labels'].to(device=cuda)
-    size_tensor = train_data['size'].view(opt.num_views * len(batches), 2).to(device=cuda)
+    size_tensor = train_data['size'].to(device=cuda)
 
     calib_tensor = reshape_multiview_calib_tensor(calib_tensor)
 
     if opt.num_views > 1:
         sample_tensor = reshape_sample_tensor(sample_tensor, opt.num_views)
-        sample_normals_tensor = reshape_sample_tensor(sample_normals_tensor, opt.num_views)
 
     return image_tensor_list, calib_tensor, sample_tensor, label_tensor, size_tensor, sample_normals_tensor, normals_tensor
 
@@ -92,7 +160,7 @@ def reshape_sample_tensor(sample_tensor, num_views):
 
 def gen_mesh(opt, net, cuda, data, save_path, use_octree=True):
     batch = [data]
-    image_tensor_list, calib_tensor, sample_tensor, label_tensor, img_sizes = prepareBatches(batch, cuda, opt)
+    image_tensor_list, calib_tensor, sample_tensor, label_tensor, img_sizes, points_nml, labels_nml = prepareBatches(batch, cuda, opt)
 
     #image_tensor = data['img'].to(device=cuda)
     #calib_tensor = data['calib'].to(device=cuda)
@@ -213,17 +281,18 @@ def calc_error(opt, net, cuda, dataset, num_tests):
         for idx in tqdm(range(num_tests)):
             data = dataset[idx * len(dataset) // num_tests]
             batch = [data]
-            image_tensor_list, calib_tensor, sample_tensor, label_tensor, img_sizes = prepareBatches(batch, cuda, opt)
+            #ToDO: Normal Loss!
+            image_tensor_list, calib_tensor, sample_tensor, label_tensor, img_sizes, points_nml, labels_nml = prepareBatches(batch, cuda, opt)
 
             res, error = net.forward(image_tensor_list, sample_tensor, calib_tensor, imgSizes=img_sizes,
-                                      labels=label_tensor)
+                                      labels=label_tensor, points_nml=points_nml, labels_nml=labels_nml)
 
             IOU, prec, recall = compute_acc(res, label_tensor)
 
             # print(
             #     '{0}/{1} | Error: {2:06f} IOU: {3:06f} prec: {4:06f} recall: {5:06f}'
             #         .format(idx, num_tests, error.item(), IOU.item(), prec.item(), recall.item()))
-            erorr_arr.append(error.item())
+            erorr_arr.append(error['Err(occ)'].mean().item())
             IOU_arr.append(IOU.item())
             prec_arr.append(prec.item())
             recall_arr.append(recall.item())

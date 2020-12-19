@@ -21,37 +21,54 @@ from multiprocessing import Manager, Process
 log = logging.getLogger('trimesh')
 log.setLevel(40)
 
-def load_chunk(root_dir, foldersLocal, meshs, sdf):
+def loadData(root_dir, sub_name, loadNormals=True):
+    combinedPath = os.path.join(root_dir, sub_name)
+    pointsSDF = np.load(os.path.join(combinedPath, 'points.npy'))
+    sdf = np.load(os.path.join(combinedPath, 'sdf.npy')) < 0
+
+    pointsNormals = None
+    normals = None
+
+    if loadNormals:
+        pointsNormals = np.load(os.path.join(combinedPath, 'points_Normals.npy'))
+        normals = np.load(os.path.join(combinedPath, 'Normals.npy'))
+
+    return pointsSDF, sdf, pointsNormals, normals
+
+def load_chunk(root_dir, foldersLocal, pointsSDF, sdf, pointsNormals, normals, loadNormals = True):
 
     for i, sub_name in enumerate(foldersLocal):
         if psutil.virtual_memory().percent < 85:
             print("Loading ... {0} / {1}".format(i, len(foldersLocal)))
-            if sdf is None:
-                meshs[sub_name] = trimesh.load(os.path.join(root_dir, sub_name, '%s_100k.obj' % sub_name))
-            else:
-                meshs[sub_name] = np.load(os.path.join(root_dir, sub_name, 'points.npy'))
-                sdf[sub_name] = np.load(os.path.join(root_dir, sub_name, 'sdf.npy')) < 0
+
+            pointsSDF_l, sdf_l, pointsNormals_l, normals_l = loadData(root_dir, sub_name, loadNormals)
+
+            pointsSDF[sub_name] = pointsSDF_l
+            sdf[sub_name] = sdf_l
+
+            if loadNormals:
+                pointsNormals[sub_name] = pointsNormals_l
+                normals[sub_name] = normals_l
         else:
             print("Stopping, running out of memory soon. Rest will be streamed from disc.")
             break
 
-def load_trimesh(root_dir, folders, loadSdf = True):
+def loadDataParallel(root_dir, folders, loadNormals):
 
     num_cpus = psutil.cpu_count(logical=False)
     chunks = [folders[i::num_cpus] for i in range(num_cpus)]
 
     manager = Manager()
     points = manager.dict()
-    sdf = None
+    sdf = manager.dict()
+    pointsNormal = manager.dict()
+    normals = manager.dict()
 
-    if loadSdf:
-        sdf = manager.dict()
-
-    job = [Process(target=load_chunk, args=(root_dir, chunks[i], points, sdf)) for i in range(num_cpus)]
+    job = [Process(target=load_chunk, args=(root_dir, chunks[i], points, sdf, pointsNormal, normals, loadNormals)) for i in range(num_cpus)]
     _ = [p.start() for p in job]
     _ = [p.join() for p in job]
 
-    return points, sdf
+    return points, sdf, pointsNormal, normals
 
 def save_samples_truncted_prob(fname, points, prob):
     '''
@@ -76,7 +93,6 @@ def save_samples_truncted_prob(fname, points, prob):
                           'ply\nformat ascii 1.0\nelement vertex {:d}\nproperty float x\nproperty float y\nproperty float z\nproperty uchar red\nproperty uchar green\nproperty uchar blue\nend_header').format(
                           points.shape[0])
                       )
-
 
 def make_rotate(rx, ry, rz):
     sinX = np.sin(rx)
@@ -123,20 +139,11 @@ class TrainDataset(Dataset):
 
         sub_dir = "training" if self.is_train else "test"
 
-        self.use_normals = True
+        self.use_normals_input = True
+        self.use_normals = self.opt.use_normal_loss
 
         # Path setup
         self.root = os.path.join(self.opt.dataroot, sub_dir)
-
-        #self.RENDER = os.path.join(self.root, 'RENDER')
-        #self.MASK = os.path.join(self.root, 'MASK')
-        #self.PARAM = os.path.join(self.root, 'PARAM')
-        #self.UV_MASK = os.path.join(self.root, 'UV_MASK')
-        #self.UV_NORMAL = os.path.join(self.root, 'UV_NORMAL')
-        #self.UV_RENDER = os.path.join(self.root, 'UV_RENDER')
-        #self.UV_POS = os.path.join(self.root, 'UV_POS')
-        #self.OBJ = os.path.join(self.root, 'GEO', 'OBJ')
-
         self.B_MIN = np.array([-0.5, -0.5, -0.55])
         self.B_MAX = np.array([0.5, 0.5, 0.55])
 
@@ -145,6 +152,7 @@ class TrainDataset(Dataset):
 
         self.num_sample_inout = self.opt.num_sample_inout
         self.num_sample_color = self.opt.num_sample_color
+        self.num_sample_normals = self.opt.num_sample_normals
 
         self.yaw_list = list(range(0,181,90))
         self.pitch_list = [0, 90]
@@ -165,17 +173,19 @@ class TrainDataset(Dataset):
         ])
 
         self.loadSdf = True
-        #self.mesh_dic = load_trimesh(self.OBJ)
         self.points_dic = None
         self.sdf_dic = None
+        self.points_normals_dic = None
+        self.normals_dic = None
 
-        points, sdf = load_trimesh(self.root, self.subjects, loadSdf=self.loadSdf)
+        points, sdf, pointsNormals, normals = loadDataParallel(self.root, self.subjects, self.use_normals)
+
         self.points_dic = points
         self.sdf_dic = sdf
+        self.points_normals_dic = pointsNormals
+        self.normals_dic = normals
 
     def get_subjects(self):
-        #all_subjects = os.listdir(self.OBJ)
-
         all_subjects = []
         listAll = os.listdir(self.root)
 
@@ -186,8 +196,8 @@ class TrainDataset(Dataset):
             path = os.path.join(self.root, subject, 'sdf.npy')
             if os.path.exists(path):
                 testDatatype = np.load(path)
-                if testDatatype.dtype is np.dtype(np.float):
-                    if os.path.exists(os.path.join(self.root, subject, 'top_Normals.npy' if self.use_normals else 'top_Blueprint.npy')):
+                if testDatatype.dtype is np.dtype(np.float32):
+                    if os.path.exists(os.path.join(self.root, subject, 'top_Normals.npy' if self.use_normals_input else 'top_Blueprint.npy')):
                         all_subjects.append(subject)
                     else:
                         print("%s has no .npy render!" % subject)
@@ -195,16 +205,6 @@ class TrainDataset(Dataset):
                     print("Type is not float!")
             else:
                 print("%s has no sdf file!" % subject)
-
-        #var_subjects = np.loadtxt(os.path.join(self.root, 'val.txt'), dtype=str)
-
-        #if len(var_subjects) == 0:
-            #return all_subjects
-
-        #if self.is_train:
-            #return sorted(list(set(all_subjects) - set(var_subjects)))
-        #else:
-            #return sorted(list(var_subjects))
 
         return all_subjects
 
@@ -223,11 +223,7 @@ class TrainDataset(Dataset):
         else:
             return '%d_%d_%02d' % (yaw, pitch, 0)
 
-
-    def make_divisible(self, x, div):
-        return int(((x // div) + 1) * div)
-
-    def get_render(self, subject, num_views, yid=0, pid=0, random_sample=False):
+    def get_render(self, subject, num_views):
         '''
         Return the render data
         :param subject: subject name
@@ -239,14 +235,6 @@ class TrainDataset(Dataset):
             'extrinsic': [num_views, 4, 4] extrinsic matrix
             'mask': [num_views, 1, W, H] masks
         '''
-        #pitch = self.pitch_list[pid]
-
-        # The ids are an even distribution of num_views around view_id
-        #view_ids = [self.yaw_list[(yid + len(self.yaw_list) // num_views * offset) % len(self.yaw_list)]
-                    #for offset in range(num_views)]
-
-        #if random_sample:
-            #view_ids = np.random.choice(self.yaw_list, num_views, replace=False)
 
         if num_views == 4:
             yaw_list = [0, 90, 90, 180]
@@ -257,12 +245,10 @@ class TrainDataset(Dataset):
         
         calib_list = []
         render_list = []
-        mask_list = []
-        size_list = []
         extrinsic_list = []
 
         sample_path = os.path.join(self.root, subject)
-        if self.use_normals:
+        if self.use_normals_input:
             views = datasetInterfaceProcessed.getViewsNormals(sample_path)
         else:
             views = datasetInterfaceProcessed.getViewsBlueprint(sample_path)
@@ -271,27 +257,6 @@ class TrainDataset(Dataset):
         bb = datasetInterfaceUnity.getBoundingBox(sample_path)
         views = viewUtils.trimViewsByBB(views, bb)
 
-        for key in views:
-            div = 32
-            width = views[key].shape[1]
-            height = views[key].shape[0]
-            newWidth = width
-            newHeight = height
-
-            diffWidth = 0
-            diffHeight = 0
-            if width % div != 0:
-                newWidth = self.make_divisible(width, div)
-                diffWidth = (newWidth - width) //2
-
-            if height % div != 0:
-                newHeight = self.make_divisible(height, div)
-                diffHeight = (newHeight - height) //2
-
-            newImg = np.zeros((newHeight, newWidth, 3 if self.use_normals else 1), np.uint8)
-            newImg[diffHeight:height+diffHeight, diffWidth:width + diffWidth, :] = views[key]
-            views[key] = newImg
-
         for idx, yaw in enumerate(yaw_list):
             pitch = 0
             
@@ -299,22 +264,6 @@ class TrainDataset(Dataset):
                 pitch = 90
 
             poseName = self.angles_to_name(yaw, pitch)
-            #param_path = os.path.join(self.PARAM, subject, '%d_%d_%02d.npy' % (yaw, pitch, 0))
-            #render_path = os.path.join(self.RENDER, subject, '%d_%d_%02d.jpg' % (yaw, pitch, 0))
-            #render_path = os.path.join(sample_path, '%s_%s.npy' % (self.angles_to_name(yaw, pitch),
-                                                                          #"Normals" if self.use_normals else "Blueprint"))
-            #mask_path = os.path.join(self.MASK, subject, '%d_%d_%02d.png' % (vid, pitch, 0))
-
-            # loading calibration data
-            #param = np.load(param_path, allow_pickle=True)
-            # pixel unit / world unit
-            #ortho_ratio = param.item().get('ortho_ratio')
-            # world unit / model unit
-            #scale = param.item().get('scale') * (self.opt.loadSize/512)
-            # camera center world coordinate
-            #center = param.item().get('center')
-            # model rotation
-            #R = param.item().get('R')
 
             ortho_ratio = 1.0
             scale = self.opt.loadSize
@@ -341,7 +290,7 @@ class TrainDataset(Dataset):
             #dataRen = np.load(render_path)
             #render = Image.fromarray(dataRen, mode='RGB' if self.use_normals else "L")
 
-            render = Image.fromarray(views[poseName], mode='RGB' if self.use_normals else "L")
+            render = Image.fromarray(views[poseName], mode='RGB' if self.use_normals_input else "L")
             #render = Image.open(render_path).convert('L')
             #render = Image.open(render_path).convert('RGB')
 
@@ -409,12 +358,10 @@ class TrainDataset(Dataset):
             #mask = transforms.Resize(self.load_size)(mask)
             #mask = transforms.ToTensor()(mask).float()
             #mask_list.append(mask)
-            size = torch.Tensor([self.opt.loadSize / render.size[0], self.opt.loadSize / render.size[1]])
             render = self.to_tensor(render)
             #render = mask.expand_as(render) * render
 
             #render_list.append(render)
-            size_list.append(size)
             render_list.append(render)
             calib_list.append(calib)
             extrinsic_list.append(extrinsic)
@@ -422,11 +369,8 @@ class TrainDataset(Dataset):
         return {
             #'img': torch.stack(render_list, dim=0),
             'img': render_list,
-            'size': torch.stack(size_list, dim=0),
             'calib': torch.stack(calib_list, dim=0),
             'extrinsic': torch.stack(extrinsic_list, dim=0),
-
-            #'mask': torch.stack(mask_list, dim=0)
         }
 
     def select_sampling_method(self, subject):
@@ -441,19 +385,33 @@ class TrainDataset(Dataset):
         maxBB = np.array([bb['max'][0], bb['max'][1], bb['max'][2] + 0.05])
         bounds = {'b_min': minBB - 0.5, 'b_max': maxBB - 0.5}
 
+        normals_points = None
+        normals = None
+
         if self.loadSdf:
-            points = self.points_dic[subject]
-            sdf = self.sdf_dic[subject]
+            if subject in self.points_dic:
+                points = self.points_dic[subject]
+                sdf = self.sdf_dic[subject]
 
-            normals_points = np.load(os.path.join(self.root_dir, subject, 'points_Normals.npy'))
-            normals = np.load(os.path.join(self.root_dir, subject, 'Normals.npy'))
+                if self.use_normals:
+                    normals_points = self.points_normals_dic[subject]
+                    normals = self.normals_dic[subject]
+            else:
+                points, sdf, normals_points, normals = loadData(self.root, subject, self.use_normals_input)
 
+            #Occupany sampling
             num = 4 * self.num_sample_inout + self.num_sample_inout // 4
-            #num = self.num_sample_inout
             index = np.random.choice(sdf.shape[0], num, replace=False)
             sample_points = points[index]
-            #sdf_values = sdf[index]
             inside = sdf[index]
+
+            #Normal sampling
+            if self.use_normals:
+                indexNormal = np.random.choice(normals_points.shape[0], self.num_sample_normals, replace=False)
+                normals_points = normals_points[indexNormal].T
+                normals = normals[indexNormal].T
+                normals_points = torch.Tensor(normals_points).float()
+                normals = torch.Tensor(normals).float()
 
             #sdf = np.clip(sdf, -self.opt.sigma, self.opt.sigma)
             #sdf = sdf * (1/self.opt.sigma)
@@ -462,11 +420,7 @@ class TrainDataset(Dataset):
             #samples = sample_points.T
             #labels = np.expand_dims(sdf, 0)
         else:
-            if subject in self.mesh_dic:
-                mesh = self.mesh_dic[subject]
-            else:
-                mesh = trimesh.load(os.path.join(self.root, subject, '%s_100k.obj' % subject))
-
+            mesh = self.mesh_dic[subject]
             #bounds = {'b_min': -mesh.extents/2, 'b_max': mesh.extents/2}
             surface_points, _ = trimesh.sample.sample_surface(mesh, 4 * self.num_sample_inout)
             sample_points = surface_points + np.random.normal(scale=self.opt.sigma, size=surface_points.shape)
@@ -490,7 +444,6 @@ class TrainDataset(Dataset):
 
         samples = np.concatenate([inside_points, outside_points], 0).T
         labels = np.concatenate([np.ones((1, inside_points.shape[0])), np.zeros((1, outside_points.shape[0]))], 1)
-
         #save_samples_truncted_prob('out_{0}_old.ply'.format(subject), samples.T, labels.T)
         #exit(0)
 
@@ -528,12 +481,10 @@ class TrainDataset(Dataset):
             sample_data, boundingBox = self.select_sampling_method(subject)
             res.update(sample_data)
 
-        #print(boundingBox)
 
         res.update(boundingBox)
 
-        render_data = self.get_render(subject, num_views=self.num_views, yid=yid, pid=pid,
-                                        random_sample=False)
+        render_data = self.get_render(subject, num_views=self.num_views)
         res.update(render_data)
 
         # img = np.uint8((np.transpose(render_data['img'][0].numpy(), (1, 2, 0)) * 0.5 + 0.5)[:, :, ::-1] * 255.0)

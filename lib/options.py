@@ -57,6 +57,8 @@ class BaseOptions():
         g_sample.add_argument('--sigma', type=float, default=.01, help='perturbation standard deviation for positions')
 
         #g_sample.add_argument('--num_sample_inout', type=int, default=5000, help='# of sampling points')
+        g_sample.add_argument('--use_normal_loss', default=False, action='store_true', help='Use normal loss or not')
+        g_sample.add_argument('--num_sample_normals', type=int, default=5000, help='# of sampling points')
         g_sample.add_argument('--num_sample_inout', type=int, default=5000, help='# of sampling points')
         g_sample.add_argument('--num_sample_color', type=int, default=0, help='# of sampling points')
 
@@ -107,8 +109,7 @@ class BaseOptions():
         parser.add_argument('--gen_test_mesh', action='store_true', help='generate test mesh')
         parser.add_argument('--gen_train_mesh', action='store_true', help='generate train mesh')
         parser.add_argument('--all_mesh', action='store_true', help='generate meshs from all hourglass output')
-        parser.add_argument('--num_gen_mesh_test', type=int, default=1,
-                            help='how many meshes to generate during testing')
+        parser.add_argument('--num_gen_mesh_test', type=int, default=1, help='how many meshes to generate during testing')
 
         # path
         parser.add_argument('--checkpoints_path', type=str, default='./checkpoints', help='path to save checkpoints')

@@ -24,11 +24,21 @@ from lib.geometry import index
 # get options
 opt = BaseOptions().parse()
 
-
+class MyDataParallel(torch.nn.DataParallel):
+    """
+    Allow nn.DataParallel to call model's attributes.
+    """
+    def __getattr__(self, name):
+        try:
+            return super().__getattr__(name)
+        except AttributeError:
+            return getattr(self.module, name)
 
 def train(opt):
     # set cuda
-    cuda = torch.device('cuda:%d' % opt.gpu_id)
+    device_ids = [int(i) for i in opt.gpu_ids.split(",")]
+    cuda = torch.device('cuda:%d' % device_ids[0])
+
     torch.cuda.empty_cache()
 
     train_dataset = TrainDataset(opt, phase='train')
@@ -49,13 +59,22 @@ def train(opt):
     print('train data size: ', len(train_data_loader))
 
     # NOTE: batch size should be 1 and use all the points for evaluation
-    test_data_loader = DataLoader(test_dataset,
-                                  batch_size=None, shuffle=False,
-                                  num_workers=opt.num_threads, pin_memory=opt.pin_memory)
-    print('test data size: ', len(test_data_loader))
+   # test_data_loader = DataLoader(test_dataset,
+                                  #batch_size=None, shuffle=False,
+                                  #num_workers=opt.num_threads, pin_memory=opt.pin_memory)
+    #print('test data size: ', len(test_data_loader))
 
     # create net
-    netG = HGPIFuNet(opt, projection_mode).to(device=cuda)
+    #netG = HGPIFuNet(opt, projection_mode).to(device=cuda)
+    print("Num GPUs: " + str(torch.cuda.device_count()))
+
+    if len(device_ids) > 1:
+        netG = MyDataParallel(HGPIFuNet(opt, projection_mode), device_ids=device_ids).to(device=cuda)
+    else:
+        netG = HGPIFuNet(opt, projection_mode).to(device=cuda)
+
+    #netG = HGPIFuNet(opt, projection_mode).to(device=cuda)
+
     optimizerG = torch.optim.RMSprop(netG.parameters(), lr=opt.learning_rate, momentum=0, weight_decay=0)
     lr = opt.learning_rate
     print('Using Network: ', netG.name)
@@ -117,8 +136,12 @@ def train(opt):
             #res, error = netG.forward(image_tensor, sample_tensor, calib_tensor, labels=label_tensor)
 
             #scaler.scale(error).backward()
-            error.backward()
+            #error['Err(occ)'].mean().backward()
+
+            #ToDo: When do mix this?
+            error['Err(cmb)'].mean().backward()
             optimizerG.step()
+
             #scaler.step(optimizerG)
             #scaler.update()
 
@@ -128,11 +151,8 @@ def train(opt):
 
             if train_idx % opt.freq_plot == 0:
                 print(
-                    'Name: {0} | Epoch: {1} | {2}/{3} | Err: {4:.06f} | LR: {5:.06f} | Sigma: {6:.02f} | dataT: {7:.05f} | netT: {8:.05f} | ETA: {9:02d}:{10:02d}'.format(
-                        opt.name, epoch, train_idx, len(train_data_loader), error.item(), lr, opt.sigma,
-                                                                            iter_start_time - iter_data_time,
-                                                                            iter_net_time - iter_start_time, int(eta // 60),
-                        int(eta - 60 * (eta // 60))))
+                    'Name: {0} | Epoch: {1} | {2}/{3} | Err (Cmb): {4:.06f} | Err(Occ): {5:.06f} |  Err(Nml): {6:.06f} | LR: {7:.06f} | dataT: {8:.05f} | netT: {9:.05f} | ETA: {10:02d}:{11:02d}'.format(
+                        opt.name, epoch, train_idx, len(train_data_loader), error['Err(cmb)'].mean().item(), error['Err(occ)'].mean().item(), error['Err(nml)'].mean().item(), lr, iter_start_time - iter_data_time, iter_net_time - iter_start_time, int(eta // 60),int(eta - 60 * (eta // 60))))
 
             if train_idx % opt.freq_save == 0 and train_idx != 0:
                 torch.save(netG.state_dict(), '%s/%s/netG_latest' % (opt.checkpoints_path, opt.name))
@@ -148,6 +168,9 @@ def train(opt):
 
         # update learning rate
         lr = adjust_learning_rate(optimizerG, epoch, lr, opt.schedule, opt.gamma)
+
+        if len(device_ids) > 1:
+            netG.device_ids = [device_ids[0]]
 
         #### test
         with torch.no_grad():
@@ -178,19 +201,22 @@ def train(opt):
             if not opt.no_gen_mesh:
                 print('generate mesh (test) ...')
                 for gen_idx in tqdm(range(opt.num_gen_mesh_test)):
-                    test_data = random.choice(test_dataset)
-                    save_path = '%s/%s/test_eval_epoch%d_%s.obj' % (
+                    test_data = test_dataset[random.randint(0, len(test_dataset) - 1)]
+                    save_path = '%s/%s/test/test_eval_epoch%d_%s.obj' % (
                         opt.results_path, opt.name, epoch, test_data['name'])
                     gen_mesh(opt, netG, cuda, test_data, save_path)
 
                 print('generate mesh (train) ...')
                 train_dataset.is_train = False
                 for gen_idx in tqdm(range(opt.num_gen_mesh_test)):
-                    train_data = random.choice(train_dataset)
-                    save_path = '%s/%s/train_eval_epoch%d_%s.obj' % (
+                    train_data = train_dataset[random.randint(0, len(test_dataset) - 1)]
+                    save_path = '%s/%s/training/train_eval_epoch%d_%s.obj' % (
                         opt.results_path, opt.name, epoch, train_data['name'])
                     gen_mesh(opt, netG, cuda, train_data, save_path)
                 train_dataset.is_train = True
+
+        if len(device_ids) > 1:
+            netG.device_ids = device_ids
 
 if __name__ == '__main__':
     train(opt)

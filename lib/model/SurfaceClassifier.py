@@ -57,14 +57,6 @@ class SurfaceClassifier(nn.Module):
             if i != len(self.filters) - 1:
                 y = F.leaky_relu(y)
 
-            if False and self.num_views > 1 and i == len(self.filters) // 2:
-                y = y.view(
-                    -1, self.num_views, y.shape[1], y.shape[2]
-                ).mean(dim=1)
-                tmpy = feature.view(
-                    -1, self.num_views, feature.shape[1], feature.shape[2]
-                ).mean(dim=1)
-
         if self.last_op:
             y = self.last_op(y)
 

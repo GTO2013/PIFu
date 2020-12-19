@@ -72,17 +72,17 @@ class HGPIFuNet(BasePIFuNet):
             #feat = self.image_filter(img).unsqueeze(0)
 
             # If it is not in training, only produce the last im_feat
-            if not self.training:
-                feat = [feat[-1]]
+            #if not self.training:
+            feat = [feat[-1]]
 
             self.im_feat_list.append(feat)
 
         #self.im_feat_list, self.tmpx, self.normx = self.image_filter(images)
 
-        if not self.training:
-            self.im_feat_list = [self.im_feat_list[-1]]
+        #if not self.training:
+            #self.im_feat_list = [self.im_feat_list[-1]]
 
-    def calc_normal(self, points, calibs, imgSizes, transforms=None, labels=None, delta=0.005, fd_type='forward'):
+    def calc_normal(self, points, calibs, imgSizes, transforms=None, labels=None, delta=0.004, fd_type='forward'):
         '''
         return surface normal in 'model' space.
         it computes normal only in the last stack.
@@ -106,6 +106,7 @@ class HGPIFuNet(BasePIFuNet):
 
         points_all = torch.stack([points, pdx, pdy, pdz], 3)
         points_all = points_all.view(*points.size()[:2], -1)
+
         xyz = self.projection(points_all, calibs, transforms)
         xy = xyz[:, :2, :]
 
@@ -113,23 +114,31 @@ class HGPIFuNet(BasePIFuNet):
         #sp_feat = self.spatial_enc(xyz, calibs=calibs)
 
         point_local_feat_list = []
-        #We do this for every image, doesnt matter which batch it is in
         for idx, im_feat_list in enumerate(self.im_feat_list):
-            # [B, Feat_i + z, N]
-            # point_local_feat = self.index(im_feat, xy)
+            for im_feat in im_feat_list:
+                # [B, Feat_i + z, N]
+                # point_local_feat = self.index(im_feat, xy)
 
-            #We need to adjust the UV coordinates now because each image has a different size
-            currentXY = xy[idx]
-            currentXY = currentXY * imgSizes[idx].unsqueeze(1)
+                #We need to adjust the UV coordinates now because each image has a different size
+                currentXY = xy[idx::self.num_views]
 
-            point_local_feat = self.index(im_feat_list[-1], currentXY.unsqueeze(0))
-            #point_local_feat = self.index(im_feat, currentXY.unsqueeze(0))
-            point_local_feat_list.append(point_local_feat)
+                sizes = imgSizes[idx::self.num_views].unsqueeze(2)
+                currentXY = currentXY * sizes
 
-        multi = torch.cat(point_local_feat_list, dim=1)
-        multi = multi.view(points.shape[0] // self.num_views, -1, multi.shape[2])
-        multi = torch.cat([multi, points[::self.num_views, :, :]], dim=1)
-        pred = self.surface_classifier(multi)[0]
+                point_local_feat = self.index(im_feat, currentXY)
+                point_local_feat_list.append(point_local_feat)
+
+        currentNumStacks = len(self.im_feat_list[0])
+
+        preds = []
+        for i in range(currentNumStacks):
+            multi = torch.cat(point_local_feat_list[i::currentNumStacks], dim=1)
+            multi = torch.cat([multi, points_all[::self.num_views, :, :]], dim=1)
+
+            pred = self.surface_classifier(multi)
+            preds.append(pred)
+
+        pred = preds[-1]
         pred = pred.view(multi.shape[0], 1, -1, 4)  # (B, 1, N, 4)
 
         #point_local_feat_list = [self.index(im_feat, xy), sp_feat]
@@ -143,9 +152,9 @@ class HGPIFuNet(BasePIFuNet):
         dfdy = pred[:, :, :, 2] - pred[:, :, :, 0]
         dfdz = pred[:, :, :, 3] - pred[:, :, :, 0]
 
+        #here was a minus
         nml = -torch.cat([dfdx, dfdy, dfdz], 1)
         nml = F.normalize(nml, dim=1, eps=1e-8)
-
         self.nmls = nml
 
     def query(self, points, calibs, imgSizes = None, transforms=None, labels=None):
@@ -160,6 +169,7 @@ class HGPIFuNet(BasePIFuNet):
         :param labels: Optional [B, Res, N] gt labeling
         :return: [B, Res, N] predictions for each point
         '''
+
         if labels is not None:
             self.labels = labels
 
@@ -170,32 +180,33 @@ class HGPIFuNet(BasePIFuNet):
             tmpx_local_feature = self.index(self.tmpx, xy)
 
         point_local_feat_list = []
-        #We do this for every image, doesnt matter which batch it is in
+
+        #We do this for every image per batch
         for idx, im_feat_list in enumerate(self.im_feat_list):
             for im_feat in im_feat_list:
                 # [B, Feat_i + z, N]
                 # point_local_feat = self.index(im_feat, xy)
 
                 #We need to adjust the UV coordinates now because each image has a different size
-                currentXY = xy[idx]
-                currentXY = currentXY * imgSizes[idx].unsqueeze(1)
+                currentXY = xy[idx::self.num_views]
 
-                point_local_feat = self.index(im_feat, currentXY.unsqueeze(0))
-                #point_local_feat = self.index(im_feat, currentXY.unsqueeze(0))
+                sizes = imgSizes[idx::self.num_views].unsqueeze(2)
+                currentXY = currentXY * sizes
+
+                point_local_feat = self.index(im_feat, currentXY)
                 point_local_feat_list.append(point_local_feat)
 
-
         self.intermediate_preds_list = []
-        for i in range(self.opt.num_stack):
-            multi = torch.cat(point_local_feat_list[i::self.opt.num_stack], dim=1)
-            multi = multi.view(points.shape[0] // self.num_views, -1, multi.shape[2])
-            #multi = total.view(points.shape[0] // self.num_views, -1, points.shape[2])
+        currentNumStacks = len(self.im_feat_list[0])
+
+        for i in range(currentNumStacks):
+            multi = torch.cat(point_local_feat_list[i::currentNumStacks], dim=1)
             multi = torch.cat([multi, points[::self.num_views, :, :]], dim=1)
+
             pred = self.surface_classifier(multi)
             self.intermediate_preds_list.append(pred)
 
         self.preds = self.intermediate_preds_list[-1]
-        # print(self.preds.shape)
 
     def queryBackup(self, points, calibs, transforms=None, labels=None):
         '''
@@ -264,16 +275,18 @@ class HGPIFuNet(BasePIFuNet):
         Hourglass has its own intermediate supervision scheme
         '''
 
-        error = {'Err(occ)': 0}
+        error = {'Err(occ)': 0, 'Err(nml)': 0, 'Err(cmb)': 0}
 
         for preds in self.intermediate_preds_list:
             #error['Err(occ)'] += self.criteria['occ'](preds, self.labels, gamma)
-            error['Err(occ)'] += self.criteria['occ'](preds, self.labels)
+            error['Err(occ)'] += self.criteria['occ'](preds, self.labels).unsqueeze(0)
 
         error['Err(occ)'] /= len(self.intermediate_preds_list)
 
         if self.nmls is not None and self.labels_nml is not None:
-            error['Err(nml)'] = self.criteria['nml'](self.nmls, self.labels_nml)
+            error['Err(nml)'] = self.criteria['nml'](self.nmls, self.labels_nml).unsqueeze(0)
+
+        error['Err(cmb)'] = error['Err(occ)'] + error['Err(nml)']
 
         return error
 
