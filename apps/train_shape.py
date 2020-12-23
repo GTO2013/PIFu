@@ -128,7 +128,6 @@ def train(opt):
             #image_tensor, calib_tensor = reshape_multiview_tensors(image_tensor, calib_tensor)
 
             optimizerG.zero_grad()
-
             #with torch.cuda.amp.autocast():
             res, error = netG.forward(image_tensor_list, sample_tensor, calib_tensor, imgSizes=img_sizes,
                                       labels=label_tensor, points_nml=points_nml, labels_nml=labels_nml)
@@ -150,9 +149,12 @@ def train(opt):
                     iter_net_time - epoch_start_time)
 
             if train_idx % opt.freq_plot == 0:
+                normal_loss = 0
+                if opt.use_normal_loss:
+                    normal_loss = error['Err(nml)'].mean().item()
                 print(
                     'Name: {0} | Epoch: {1} | {2}/{3} | Err (Cmb): {4:.06f} | Err(Occ): {5:.06f} |  Err(Nml): {6:.06f} | LR: {7:.06f} | dataT: {8:.05f} | netT: {9:.05f} | ETA: {10:02d}:{11:02d}'.format(
-                        opt.name, epoch, train_idx, len(train_data_loader), error['Err(cmb)'].mean().item(), error['Err(occ)'].mean().item(), error['Err(nml)'].mean().item(), lr, iter_start_time - iter_data_time, iter_net_time - iter_start_time, int(eta // 60),int(eta - 60 * (eta // 60))))
+                        opt.name, epoch, train_idx, len(train_data_loader), error['Err(cmb)'].mean().item(), error['Err(occ)'].mean().item(), normal_loss, lr, iter_start_time - iter_data_time, iter_net_time - iter_start_time, int(eta // 60),int(eta - 60 * (eta // 60))))
 
             if train_idx % opt.freq_save == 0 and train_idx != 0:
                 torch.save(netG.state_dict(), '%s/%s/netG_latest' % (opt.checkpoints_path, opt.name))

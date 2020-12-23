@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from .BasePIFuNet import BasePIFuNet
-from .SurfaceClassifier import SurfaceClassifier
+from .SurfaceClassifier import SurfaceClassifier, SurfaceClassifierLinear
 from .DepthNormalizer import DepthNormalizer
 from .HGFilters import *
 from .UnetFilter import UNet
@@ -37,10 +37,15 @@ class HGPIFuNet(BasePIFuNet):
         self.num_views = self.opt.num_views
         self.criteria = criteria
 
-        self.image_filter = HGFilter(opt)
+        self.image_filter1 = HGFilter(opt)
+        self.image_filter2 = HGFilter(opt)
+        self.image_filter3 = HGFilter(opt)
+        self.image_filter4 = HGFilter(opt)
+
+
         #self.image_filter = UNet(in_channels=3, depth=5, wf=6, padding=True, batch_norm=True, up_mode='upsample')
 
-        self.surface_classifier = SurfaceClassifier(
+        self.surface_classifier = SurfaceClassifierLinear(
             filter_channels=self.opt.mlp_dim,
             num_views=self.opt.num_views,
             no_residual=self.opt.no_residual,
@@ -67,8 +72,15 @@ class HGPIFuNet(BasePIFuNet):
         '''
         self.im_feat_list = []
 
-        for img in images:
-            feat, _, _ = self.image_filter(img)
+        for idx, img in enumerate(images):
+            if idx == 0:
+                feat, _, _ = self.image_filter1(img)
+            elif idx == 1:
+                feat, _, _ = self.image_filter2(img)
+            elif idx == 2:
+                feat, _, _ = self.image_filter3(img)
+            elif idx == 3:
+                feat, _, _ = self.image_filter4(img)
             #feat = self.image_filter(img).unsqueeze(0)
 
             # If it is not in training, only produce the last im_feat
@@ -275,7 +287,7 @@ class HGPIFuNet(BasePIFuNet):
         Hourglass has its own intermediate supervision scheme
         '''
 
-        error = {'Err(occ)': 0, 'Err(nml)': 0, 'Err(cmb)': 0}
+        error = {'Err(occ)': 0, 'Err(cmb)': 0}
 
         for preds in self.intermediate_preds_list:
             #error['Err(occ)'] += self.criteria['occ'](preds, self.labels, gamma)
@@ -283,10 +295,11 @@ class HGPIFuNet(BasePIFuNet):
 
         error['Err(occ)'] /= len(self.intermediate_preds_list)
 
-        if self.nmls is not None and self.labels_nml is not None:
+        if self.opt.use_normal_loss and self.nmls is not None and self.labels_nml is not None:
             error['Err(nml)'] = self.criteria['nml'](self.nmls, self.labels_nml).unsqueeze(0)
-
-        error['Err(cmb)'] = error['Err(occ)'] + error['Err(nml)']
+            error['Err(cmb)'] = error['Err(occ)'] + error['Err(nml)']
+        else:
+            error['Err(cmb)'] = error['Err(occ)']
 
         return error
 
@@ -297,7 +310,7 @@ class HGPIFuNet(BasePIFuNet):
         # Phase 2: point query
         self.query(points=points, calibs=calibs, imgSizes = imgSizes, transforms=transforms, labels=labels)
 
-        if points_nml is not None and labels_nml is not None:
+        if self.opt.use_normal_loss and points_nml is not None and labels_nml is not None:
             self.calc_normal(points_nml, calibs, imgSizes, labels=labels_nml)
 
         # get the prediction
