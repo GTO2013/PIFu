@@ -6,21 +6,16 @@ ROOT_PATH = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 import time
 import json
-import numpy as np
-import cv2
 import random
-import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from lib.options import BaseOptions
-from lib.mesh_util import *
-from lib.sample_util import *
 from lib.train_util import *
 from lib.data import *
 from lib.model import *
 from lib.train_metrics import calc_error
-from lib.geometry import index
+import apps.tensorboard_wrapper as tb
 
 # get options
 opt = BaseOptions().parse()
@@ -40,16 +35,11 @@ def train(opt):
     device_ids = [int(i) for i in opt.gpu_ids.split(",")]
     cuda = torch.device('cuda:%d' % device_ids[0])
 
-    torch.cuda.empty_cache()
-
     train_dataset = TrainDataset(opt, phase='train')
     test_dataset = TrainDataset(opt, phase='test')
 
-    projection_mode = train_dataset.projection_mode
-
     print("Creating loader...")
     # create data loader
-    print(opt.num_threads)
     #train_data_loader = DataLoader(train_dataset,
                                    #batch_size=opt.batch_size, shuffle=not opt.serial_batches,
                                    #num_workers=opt.num_threads, pin_memory=opt.pin_memory)
@@ -70,12 +60,13 @@ def train(opt):
     print("Num GPUs: " + str(torch.cuda.device_count()))
 
     if len(device_ids) > 1:
-        netG = MyDataParallel(HGPIFuNet(opt, projection_mode), device_ids=device_ids).to(device=cuda)
+        netG = MyDataParallel(HGPIFuNet(opt, train_dataset.projection_mode), device_ids=device_ids).to(device=cuda)
     else:
-        netG = HGPIFuNet(opt, projection_mode).to(device=cuda)
+        netG = HGPIFuNet(opt, train_dataset.projection_mode).to(device=cuda)
 
     #netG = HGPIFuNet(opt, projection_mode).to(device=cuda)
 
+    #optimizerG = torch.optim.Adam(netG.parameters(), lr=opt.learning_rate)
     optimizerG = torch.optim.RMSprop(netG.parameters(), lr=opt.learning_rate, momentum=0, weight_decay=0)
     lr = opt.learning_rate
     print('Using Network: ', netG.name)
@@ -147,6 +138,8 @@ def train(opt):
                     'Name: {0} | Epoch: {1} | {2}/{3} | Err (Cmb): {4:.06f} | Err(Occ): {5:.06f} |  Err(Nml): {6:.06f} | LR: {7:.06f} | dataT: {8:.05f} | netT: {9:.05f} | ETA: {10:02d}:{11:02d}'.format(
                         opt.name, epoch, train_idx, len(train_data_loader), error['Err(cmb)'].mean().item(), error['Err(occ)'].mean().item(), normal_loss, lr, iter_start_time - iter_data_time, iter_net_time - iter_start_time, int(eta // 60),int(eta - 60 * (eta // 60))))
 
+                tb.updateDuringEpoch(train_idx, error['Err(cmb)'].mean().item(), error['Err(occ)'].mean().item(), normal_loss, iter_net_time - iter_start_time)
+
             if train_idx % opt.freq_save == 0 and train_idx != 0:
                 torch.save(netG.state_dict(), '%s/%s/netG_latest' % (opt.checkpoints_path, opt.name))
                 torch.save(netG.state_dict(), '%s/%s/netG_epoch_%d' % (opt.checkpoints_path, opt.name, epoch))
@@ -160,7 +153,8 @@ def train(opt):
             iter_data_time = time.time()
 
         # update learning rate
-        lr = adjust_learning_rate(optimizerG, epoch, lr, opt.schedule, opt.gamma)
+        if isinstance(optimizerG, torch.optim.RMSprop):
+            lr = adjust_learning_rate(optimizerG, epoch, lr, opt.schedule, opt.gamma)
 
         if len(device_ids) > 1:
             netG.device_ids = [device_ids[0]]
@@ -191,13 +185,13 @@ def train(opt):
                 test_losses['prec(train)'] = prec
                 test_losses['recall(train)'] = recall
 
-            if not opt.no_gen_mesh:
+            #if not opt.no_gen_mesh:
                 print('generate mesh (test) ...')
                 for gen_idx in tqdm(range(opt.num_gen_mesh_test)):
                     test_data = test_dataset[random.randint(0, len(test_dataset) - 1)]
                     save_path = '%s/%s/test/test_eval_epoch%d_%s.obj' % (
                         opt.results_path, opt.name, epoch, test_data['name'])
-                    gen_mesh(opt, netG, cuda, test_data, save_path)
+                    mesh_test = gen_mesh(opt, netG, cuda, test_data, save_path)
 
                 print('generate mesh (train) ...')
                 train_dataset.is_train = False
@@ -205,8 +199,10 @@ def train(opt):
                     train_data = train_dataset[random.randint(0, len(test_dataset) - 1)]
                     save_path = '%s/%s/training/train_eval_epoch%d_%s.obj' % (
                         opt.results_path, opt.name, epoch, train_data['name'])
-                    gen_mesh(opt, netG, cuda, train_data, save_path)
+                    mesh_train = gen_mesh(opt, netG, cuda, train_data, save_path)
                 train_dataset.is_train = True
+
+            tb.updateAfterEpoch(epoch, train_errors, test_errors, mesh_train, mesh_test)
 
         if len(device_ids) > 1:
             netG.device_ids = device_ids

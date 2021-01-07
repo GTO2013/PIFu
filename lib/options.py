@@ -1,6 +1,4 @@
 import argparse
-import os
-
 
 class BaseOptions():
     def __init__(self):
@@ -22,7 +20,6 @@ class BaseOptions():
 
         # Training related
         g_train = parser.add_argument_group('Training')
-        g_train.add_argument('--gpu_id', type=int, default=0, help='gpu id for cuda')
         g_train.add_argument('--gpu_ids', type=str, default='0', help='gpu ids: e.g. 0  0,1,2, 0,2, -1 for CPU mode')
 
         g_train.add_argument('--num_threads', default=1, type=int, help='#threads for loading data')
@@ -32,7 +29,7 @@ class BaseOptions():
         
         g_train.add_argument('--batch_size', type=int, default=1, help='input batch size')
         #g_train.add_argument('--learning_rate', type=float, default=1e-3, help='adam learning rate')
-        g_train.add_argument('--learning_rate', type=float, default=1e-3, help='adam learning rate') # -4 before
+        g_train.add_argument('--learning_rate', type=float, default=1e-4, help='adam learning rate') # -4 before
         g_train.add_argument('--learning_rateC', type=float, default=1e-3, help='adam learning rate')
         g_train.add_argument('--num_epoch', type=int, default=100, help='num epoch to train')
 
