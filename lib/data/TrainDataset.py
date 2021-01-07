@@ -1,6 +1,8 @@
-
 from torch.utils.data import Dataset
 import sys
+
+from .ParallelDataLoader import loadData, loadDataParallel
+
 sys.path.append(r'C:\Blueprint2Car')
 from src.datasetInterfaces import datasetInterfaceUnity, datasetInterfaceProcessed
 from src.utils import viewUtils
@@ -9,123 +11,15 @@ import os
 import random
 import torchvision.transforms as transforms
 from PIL import Image, ImageOps
-import cv2
 import torch
 from PIL.ImageFilter import GaussianBlur
 import trimesh
 import logging
-import psutil
 import math
-from multiprocessing import Manager, Process
+from ..train_util import make_rotate
 
 log = logging.getLogger('trimesh')
 log.setLevel(40)
-
-def loadData(root_dir, sub_name, loadNormals=True):
-    combinedPath = os.path.join(root_dir, sub_name)
-    pointsSDF = np.load(os.path.join(combinedPath, 'points.npy'))
-    sdf = np.load(os.path.join(combinedPath, 'sdf.npy')) < 0
-
-    pointsNormals = None
-    normals = None
-
-    if loadNormals:
-        pointsNormals = np.load(os.path.join(combinedPath, 'points_Normals.npy'))
-        normals = np.load(os.path.join(combinedPath, 'Normals.npy'))
-
-    return pointsSDF, sdf, pointsNormals, normals
-
-def load_chunk(root_dir, foldersLocal, pointsSDF, sdf, pointsNormals, normals, loadNormals = True):
-
-    for i, sub_name in enumerate(foldersLocal):
-        if psutil.virtual_memory().percent < 85:
-            print("Loading ... {0} / {1}".format(i, len(foldersLocal)))
-
-            pointsSDF_l, sdf_l, pointsNormals_l, normals_l = loadData(root_dir, sub_name, loadNormals)
-
-            pointsSDF[sub_name] = pointsSDF_l
-            sdf[sub_name] = sdf_l
-
-            if loadNormals:
-                pointsNormals[sub_name] = pointsNormals_l
-                normals[sub_name] = normals_l
-        else:
-            print("Stopping, running out of memory soon. Rest will be streamed from disc.")
-            break
-
-def loadDataParallel(root_dir, folders, loadNormals):
-
-    num_cpus = psutil.cpu_count(logical=False)
-    chunks = [folders[i::num_cpus] for i in range(num_cpus)]
-
-    manager = Manager()
-    points = manager.dict()
-    sdf = manager.dict()
-    pointsNormal = manager.dict()
-    normals = manager.dict()
-
-    job = [Process(target=load_chunk, args=(root_dir, chunks[i], points, sdf, pointsNormal, normals, loadNormals)) for i in range(num_cpus)]
-    _ = [p.start() for p in job]
-    _ = [p.join() for p in job]
-
-    return points, sdf, pointsNormal, normals
-
-def save_samples_truncted_prob(fname, points, prob):
-    '''
-    Save the visualization of sampling to a ply file.
-    Red points represent positive predictions.
-    Green points represent negative predictions.
-    :param fname: File name to save
-    :param points: [N, 3] array of points
-    :param prob: [N, 1] array of predictions in the range [0~1]
-    :return:
-    '''
-    r = (prob > 0.5).reshape([-1, 1]) * 255
-    g = (prob < 0.5).reshape([-1, 1]) * 255
-    b = np.zeros(r.shape)
-
-    to_save = np.concatenate([points, r, g, b], axis=-1)
-    return np.savetxt(fname,
-                      to_save,
-                      fmt='%.6f %.6f %.6f %d %d %d',
-                      comments='',
-                      header=(
-                          'ply\nformat ascii 1.0\nelement vertex {:d}\nproperty float x\nproperty float y\nproperty float z\nproperty uchar red\nproperty uchar green\nproperty uchar blue\nend_header').format(
-                          points.shape[0])
-                      )
-
-def make_rotate(rx, ry, rz):
-    sinX = np.sin(rx)
-    sinY = np.sin(ry)
-    sinZ = np.sin(rz)
-
-    cosX = np.cos(rx)
-    cosY = np.cos(ry)
-    cosZ = np.cos(rz)
-
-    Rx = np.zeros((3,3))
-    Rx[0, 0] = 1.0
-    Rx[1, 1] = cosX
-    Rx[1, 2] = -sinX
-    Rx[2, 1] = sinX
-    Rx[2, 2] = cosX
-
-    Ry = np.zeros((3,3))
-    Ry[0, 0] = cosY
-    Ry[0, 2] = sinY
-    Ry[1, 1] = 1.0
-    Ry[2, 0] = -sinY
-    Ry[2, 2] = cosY
-
-    Rz = np.zeros((3,3))
-    Rz[0, 0] = cosZ
-    Rz[0, 1] = -sinZ
-    Rz[1, 0] = sinZ
-    Rz[1, 1] = cosZ
-    Rz[2, 2] = 1.0
-
-    R = np.matmul(np.matmul(Rz,Ry),Rx)
-    return R
 
 class TrainDataset(Dataset):
     @staticmethod
@@ -209,7 +103,7 @@ class TrainDataset(Dataset):
         return all_subjects
 
     def __len__(self):
-        return len(self.subjects) # * len(self.yaw_list) * len(self.pitch_list)
+        return len(self.subjects)
 
     def angles_to_name(self, yaw, pitch):
         if yaw == 0 and pitch == 0:
@@ -233,7 +127,6 @@ class TrainDataset(Dataset):
             'img': [num_views, C, W, H] images
             'calib': [num_views, 4, 4] calibration matrix
             'extrinsic': [num_views, 4, 4] extrinsic matrix
-            'mask': [num_views, 1, W, H] masks
         '''
 
         if num_views == 4:
@@ -286,7 +179,6 @@ class TrainDataset(Dataset):
             # Transform under image pixel space
             trans_intrinsic = np.identity(4)
 
-            #mask = Image.open(mask_path).convert('L')
             #dataRen = np.load(render_path)
             #render = Image.fromarray(dataRen, mode='RGB' if self.use_normals else "L")
 
@@ -295,7 +187,6 @@ class TrainDataset(Dataset):
             #render = Image.open(render_path).convert('RGB')
 
             #render = render.resize((self.load_size, self.load_size), Image.BILINEAR)
-            #mask = mask.resize((self.load_size, self.load_size), Image.BILINEAR)
 
             if (yaw == 90 and pitch == 0) or (yaw == 90 and pitch == 90):
                 render = ImageOps.mirror(render)
@@ -304,7 +195,6 @@ class TrainDataset(Dataset):
                 # Pad images
                 #pad_size = int(0.1 * self.load_size)
                 #render = ImageOps.expand(render, pad_size, fill=0)
-                #mask = ImageOps.expand(mask, pad_size, fill=0)
 
                 w, h = render.size
                 th, tw = self.load_size, self.load_size
@@ -313,7 +203,6 @@ class TrainDataset(Dataset):
                 if self.opt.random_flip and np.random.rand() > 0.5:
                     scale_intrinsic[0, 0] *= -1
                     render = transforms.RandomHorizontalFlip(p=1.0)(render)
-                    #mask = transforms.RandomHorizontalFlip(p=1.0)(mask)
 
                 # random scale
                 if self.opt.random_scale:
@@ -321,7 +210,6 @@ class TrainDataset(Dataset):
                     w = int(rand_scale * w)
                     h = int(rand_scale * h)
                     render = render.resize((w, h), Image.BILINEAR)
-                    #mask = mask.resize((w, h), Image.NEAREST)
                     scale_intrinsic *= rand_scale
                     scale_intrinsic[3, 3] = 1
 
@@ -342,7 +230,6 @@ class TrainDataset(Dataset):
                 y1 = int(round((h - th) / 2.)) + dy
 
                 #render = render.crop((x1, y1, x1 + tw, y1 + th))
-                #mask = mask.crop((x1, y1, x1 + tw, y1 + th))
 
                 render = self.aug_trans(render)
 
@@ -355,11 +242,7 @@ class TrainDataset(Dataset):
             calib = torch.Tensor(np.matmul(intrinsic, extrinsic)).float()
             extrinsic = torch.Tensor(extrinsic).float()
 
-            #mask = transforms.Resize(self.load_size)(mask)
-            #mask = transforms.ToTensor()(mask).float()
-            #mask_list.append(mask)
             render = self.to_tensor(render)
-            #render = mask.expand_as(render) * render
 
             #render_list.append(render)
             render_list.append(render)
@@ -374,7 +257,7 @@ class TrainDataset(Dataset):
         }
 
     def select_sampling_method(self, subject):
-        if not self.is_train:
+        if not self.is_train and self.opt.same_test_data:
             random.seed(1991)
             np.random.seed(1991)
             torch.manual_seed(1991)
@@ -388,53 +271,43 @@ class TrainDataset(Dataset):
         normals_points = None
         normals = None
 
-        if self.loadSdf:
-            if subject in self.points_dic:
-                points = self.points_dic[subject]
-                sdf = self.sdf_dic[subject]
+        if subject in self.points_dic:
+            points = self.points_dic[subject]
+            sdf = self.sdf_dic[subject]
 
-                if self.use_normals:
-                    normals_points = self.points_normals_dic[subject]
-                    normals = self.normals_dic[subject]
-            else:
-                points, sdf, normals_points, normals = loadData(self.root, subject, self.use_normals_input)
-
-            #Occupany sampling
-            num = 4 * self.num_sample_inout + self.num_sample_inout // 4
-            index = np.random.choice(sdf.shape[0], num, replace=False)
-            sample_points = points[index]
-            inside = sdf[index]
-
-            #Normal sampling
             if self.use_normals:
-                indexNormal = np.random.choice(normals_points.shape[0], self.num_sample_normals, replace=False)
-                normals_points = normals_points[indexNormal].T
-                normals = normals[indexNormal].T
-                normals_points = torch.Tensor(normals_points).float()
-                normals = torch.Tensor(normals).float()
-
-            #sdf = np.clip(sdf, -self.opt.sigma, self.opt.sigma)
-            #sdf = sdf * (1/self.opt.sigma)
-            #sdf = sdf * 0.5 + 0.5
-
-            #samples = sample_points.T
-            #labels = np.expand_dims(sdf, 0)
+                normals_points = self.points_normals_dic[subject]
+                normals = self.normals_dic[subject]
         else:
-            mesh = self.mesh_dic[subject]
-            #bounds = {'b_min': -mesh.extents/2, 'b_max': mesh.extents/2}
-            surface_points, _ = trimesh.sample.sample_surface(mesh, 4 * self.num_sample_inout)
-            sample_points = surface_points + np.random.normal(scale=self.opt.sigma, size=surface_points.shape)
+            points, sdf, normals_points, normals = loadData(self.root, subject, self.use_normals_input)
 
-            # add random points within image space
-            length = bounds['b_max'] - bounds['b_min']
-            random_points = np.random.rand(self.num_sample_inout // 4, 3) * length + bounds['b_min']
+        #Occupany sampling
+        #Load more points than we need to we can balance them later
+        num = 4 * self.num_sample_inout + self.num_sample_inout // 4
+        #num = self.num_sample_inout
+        index = np.random.choice(sdf.shape[0], num, replace=False)
+        sample_points = points[index]
+        inside = sdf[index]
 
-            sample_points = np.concatenate([sample_points, random_points], 0)
-            np.random.shuffle(sample_points)
+        #samples = sample_points.T
+        #labels = np.expand_dims(sdf, 0)
 
-            inside = mesh.contains(sample_points)
-            del mesh
+        #Normal sampling
+        if self.use_normals:
+            indexNormal = np.random.choice(normals_points.shape[0], self.num_sample_normals, replace=False)
+            normals_points = normals_points[indexNormal].T
+            normals = normals[indexNormal].T
+            normals_points = torch.Tensor(normals_points).float()
+            normals = torch.Tensor(normals).float()
 
+        #sdf = np.clip(sdf, -self.opt.sigma, self.opt.sigma)
+        #sdf = sdf * (1/self.opt.sigma)
+        #sdf = sdf * 0.5 + 0.5
+
+        #samples = sample_points.T
+        #labels = np.expand_dims(sdf, 0)
+
+        #Balance all points to be even 50/50 outside/inside
         inside_points = sample_points[inside]
         outside_points = sample_points[np.logical_not(inside)]
 
@@ -444,7 +317,8 @@ class TrainDataset(Dataset):
 
         samples = np.concatenate([inside_points, outside_points], 0).T
         labels = np.concatenate([np.ones((1, inside_points.shape[0])), np.zeros((1, outside_points.shape[0]))], 1)
-        #save_samples_truncted_prob('out_{0}_old.ply'.format(subject), samples.T, labels.T)
+        #save_samples_truncted_prob('pointclouds/out_{0}.ply'.format(subject), samples.T, labels.T)
+        #save_samples_rgb('pointclouds/normals_{0}.ply'.format(subject), normals_points.T, normals.T)
         #exit(0)
 
         samples = torch.Tensor(samples).float()
@@ -458,12 +332,7 @@ class TrainDataset(Dataset):
         }, bounds
 
     def get_item(self, index):
-        # In case of a missing file or IO error, switch to a random sample instead
-        # try:
         sid = index % len(self.subjects)
-        tmp = 0#index // len(self.subjects)
-        yid = 0#tmp % len(self.yaw_list)
-        pid = 0#tmp // len(self.yaw_list)
 
         # name of the subject 'rp_xxxx_xxx'
         subject = self.subjects[sid]
@@ -471,8 +340,6 @@ class TrainDataset(Dataset):
             'name': subject,
             'mesh_path': os.path.join(self.root, subject + '.obj'),
             'sid': sid,
-            'yid': yid,
-            'pid': pid,
             'b_min': self.B_MIN,
             'b_max': self.B_MAX,
         }
@@ -480,7 +347,6 @@ class TrainDataset(Dataset):
         if self.opt.num_sample_inout:
             sample_data, boundingBox = self.select_sampling_method(subject)
             res.update(sample_data)
-
 
         res.update(boundingBox)
 

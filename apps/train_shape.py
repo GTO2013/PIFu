@@ -19,6 +19,7 @@ from lib.sample_util import *
 from lib.train_util import *
 from lib.data import *
 from lib.model import *
+from lib.train_metrics import calc_error
 from lib.geometry import index
 
 # get options
@@ -101,13 +102,12 @@ def train(opt):
     os.makedirs(opt.checkpoints_path, exist_ok=True)
     os.makedirs(opt.results_path, exist_ok=True)
     os.makedirs('%s/%s' % (opt.checkpoints_path, opt.name), exist_ok=True)
-    os.makedirs('%s/%s' % (opt.results_path, opt.name), exist_ok=True)
+    os.makedirs('%s/%s/training' % (opt.results_path, opt.name), exist_ok=True)
+    os.makedirs('%s/%s/test' % (opt.results_path, opt.name), exist_ok=True)
 
     opt_log = os.path.join(opt.results_path, opt.name, 'opt.txt')
     with open(opt_log, 'w') as outfile:
         outfile.write(json.dumps(vars(opt), indent=2))
-
-    #scaler = torch.cuda.amp.GradScaler()
 
     # training
     start_epoch = 0 if not opt.continue_train else max(opt.resume_epoch,0)
@@ -128,21 +128,12 @@ def train(opt):
             #image_tensor, calib_tensor = reshape_multiview_tensors(image_tensor, calib_tensor)
 
             optimizerG.zero_grad()
-            #with torch.cuda.amp.autocast():
+
             res, error = netG.forward(image_tensor_list, sample_tensor, calib_tensor, imgSizes=img_sizes,
                                       labels=label_tensor, points_nml=points_nml, labels_nml=labels_nml)
 
-            #res, error = netG.forward(image_tensor, sample_tensor, calib_tensor, labels=label_tensor)
-
-            #scaler.scale(error).backward()
-            #error['Err(occ)'].mean().backward()
-
-            #ToDo: When do mix this?
             error['Err(cmb)'].mean().backward()
             optimizerG.step()
-
-            #scaler.step(optimizerG)
-            #scaler.update()
 
             iter_net_time = time.time()
             eta = ((iter_net_time - epoch_start_time) / (train_idx + 1)) * len(train_data_loader) - (

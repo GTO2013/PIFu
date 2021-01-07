@@ -65,8 +65,8 @@ class HGFilter(nn.Module):
         self.opt = opt
 
         # Base part
-        #self.conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=1 if self.opt.skip_downsample else 2, padding=3)
-        self.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1 if self.opt.skip_downsample else 2, padding=1)
+        #self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=1 if self.opt.skip_downsample else 2, padding=3)
+        self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=1 if self.opt.skip_downsample else 2, padding=3)
 
         if self.opt.norm == 'batch':
             self.bn1 = nn.BatchNorm2d(64)

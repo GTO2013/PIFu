@@ -99,9 +99,9 @@ class SurfaceClassifierLinear(nn.Module):
         :param xy: [Bx3xN] tensor of (x,y) coodinates in the image plane
         :return: [BxC_outxN] tensor of features extracted at the coordinates
         '''
-        batchsize = feature.shape[0]
-        feature = feature.permute(0,2,1)
-        feature = feature.reshape((feature.shape[0]*feature.shape[1], feature.shape[2]))
+        #batchsize = feature.shape[0]
+        #feature = feature.permute(0,2,1)
+        #feature = feature.reshape((feature.shape[0]*feature.shape[1], feature.shape[2]))
         y = feature
         tmpy = feature
         for i, f in enumerate(self.filters):
@@ -118,5 +118,5 @@ class SurfaceClassifierLinear(nn.Module):
         if self.last_op:
             y = self.last_op(y)
 
-        y = y.reshape((batchsize, 1, -1))
+        #y = y.reshape((batchsize, 1, -1))
         return y

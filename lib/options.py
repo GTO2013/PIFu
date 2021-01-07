@@ -15,25 +15,24 @@ class BaseOptions():
 
         # Experiment related
         g_exp = parser.add_argument_group('Experiment')
-        g_exp.add_argument('--name', type=str, default='example',
-                           help='name of the experiment. It decides where to store samples and models')
+        g_exp.add_argument('--name', type=str, default='multiview_pifu', help='name of the experiment')
         g_exp.add_argument('--debug', action='store_true', help='debug mode or not')
 
         g_exp.add_argument('--num_views', type=int, default=1, help='How many views to use for multiview network.')
-        g_exp.add_argument('--random_multiview', default=False, action='store_true', help='Select random multiview combination.')
 
         # Training related
         g_train = parser.add_argument_group('Training')
         g_train.add_argument('--gpu_id', type=int, default=0, help='gpu id for cuda')
         g_train.add_argument('--gpu_ids', type=str, default='0', help='gpu ids: e.g. 0  0,1,2, 0,2, -1 for CPU mode')
 
-        g_train.add_argument('--num_threads', default=1, type=int, help='# sthreads for loading data')
-        g_train.add_argument('--serial_batches', action='store_true',
-                             help='if true, takes images in order to make batches, otherwise takes them randomly')
+        g_train.add_argument('--num_threads', default=1, type=int, help='#threads for loading data')
+        g_train.add_argument('--serial_batches', action='store_true', help='if true, takes images in order to make batches, otherwise takes them randomly')
+        g_train.add_argument('--same_test_data', action='store_true', help='if true, always use the same test data')
         g_train.add_argument('--pin_memory', action='store_true', help='pin_memory')
         
         g_train.add_argument('--batch_size', type=int, default=1, help='input batch size')
-        g_train.add_argument('--learning_rate', type=float, default=1e-3, help='adam learning rate')
+        #g_train.add_argument('--learning_rate', type=float, default=1e-3, help='adam learning rate')
+        g_train.add_argument('--learning_rate', type=float, default=1e-3, help='adam learning rate') # -4 before
         g_train.add_argument('--learning_rateC', type=float, default=1e-3, help='adam learning rate')
         g_train.add_argument('--num_epoch', type=int, default=100, help='num epoch to train')
 
@@ -54,7 +53,7 @@ class BaseOptions():
 
         # Sampling related
         g_sample = parser.add_argument_group('Sampling')
-        g_sample.add_argument('--sigma', type=float, default=.01, help='perturbation standard deviation for positions')
+        g_sample.add_argument('--sigma', type=float, default=.005, help='perturbation standard deviation for positions')
 
         #g_sample.add_argument('--num_sample_inout', type=int, default=5000, help='# of sampling points')
         g_sample.add_argument('--use_normal_loss', default=False, action='store_true', help='Use normal loss or not')
@@ -73,19 +72,16 @@ class BaseOptions():
                              help='instance normalization or batch normalization or group normalization')
 
         # hg filter specify
-        g_model.add_argument('--num_stack', type=int, default=2, help='# of hourglass')
+        g_model.add_argument('--num_stack', type=int, default=3, help='# of hourglass')
         #g_model.add_argument('--num_stack', type=int, default=4, help='# of hourglass')
-        g_model.add_argument('--num_hourglass', type=int, default=2, help='# of stacked layer of hourglass')
+        g_model.add_argument('--num_hourglass', type=int, default=3, help='# of stacked layer of hourglass')
         g_model.add_argument('--skip_hourglass', action='store_true', help='skip connection in hourglass')
         g_model.add_argument('--hg_down', type=str, default='ave_pool', help='ave pool || conv64 || conv128')
         g_model.add_argument('--hourglass_dim', type=int, default='256', help='256 | 512')
         g_model.add_argument('--hourglass_dim_internal', type=int, default='128', help='256 | 512')
         g_model.add_argument('--skip_downsample', action='store_true')
 
-
         # Classification General
-        #g_model.add_argument('--mlp_dim', nargs='+', default=[257, 1024, 512, 256, 128, 1], type=int, help='# of dimensions of mlp')
-        #g_model.add_argument('--mlp_dim', nargs='+', default=[1027, 1024, 512, 256, 128, 1], type=int, help='# of dimensions of mlp')
         g_model.add_argument('--mlp_dim', nargs='+', default=[259, 1024, 512, 256, 128, 1], type=int, help='# of dimensions of mlp')
         g_model.add_argument('--mlp_dim_color', nargs='+', default=[513, 1024, 512, 256, 128, 3],
                              type=int, help='# of dimensions of color mlp')
