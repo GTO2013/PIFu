@@ -120,7 +120,7 @@ def train(opt):
 
             optimizerG.zero_grad()
 
-            res, error = netG.forward(image_tensor_list, sample_tensor, calib_tensor, imgSizes=img_sizes,
+            res, nmls, error = netG.forward(image_tensor_list, sample_tensor, calib_tensor, imgSizes=img_sizes,
                                       labels=label_tensor, points_nml=points_nml, labels_nml=labels_nml)
 
             error['Err(cmb)'].mean().backward()

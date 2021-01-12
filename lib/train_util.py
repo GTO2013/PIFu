@@ -190,13 +190,13 @@ def gen_mesh(opt, net, cuda, data, save_path, use_octree=True):
         #color = color * 0.5 + 0.5
         save_obj_mesh(save_path, verts, faces)
 
-        return [verts, faces]
+        return [verts, faces, image_tensor_list]
         #save_obj_mesh_with_color(save_path, verts, faces, color)
     except Exception as e:
         print(e)
         print('Can not create marching cubes at this time.')
 
-    return [None, None]
+    return [None, None, None]
 
 def gen_mesh_color(opt, netG, netC, cuda, data, save_path, use_octree=True):
     image_tensor = data['img'].to(device=cuda)

@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from .BasePIFuNet import BasePIFuNet
-from .SurfaceClassifier import SurfaceClassifier, SurfaceClassifierLinear
+from .SurfaceClassifier import SurfaceClassifier, Fourier, SurfaceClassifierLinear, GaussianFourierFeatureTransform
 from .DepthNormalizer import DepthNormalizer
 from .HGFilters import *
 from .UnetFilter import UNet
@@ -22,7 +22,7 @@ class HGPIFuNet(BasePIFuNet):
         5. During training, error is calculated on all stacks.
     '''
 
-    def __init__(self, opt,projection_mode='orthogonal', criteria={'occ': nn.SmoothL1Loss(beta=0.03), 'nml': nn.CosineSimilarity()}
+    def __init__(self, opt,projection_mode='orthogonal', criteria={'occ': nn.MSELoss(), 'nml': nn.CosineSimilarity()}
                  #error_term = nn.SmoothL1Loss(beta=0.001)
                  #error_term=nn.MSELoss(),
                  ):
@@ -38,23 +38,24 @@ class HGPIFuNet(BasePIFuNet):
         self.criteria = criteria
 
         self.image_filter1 = HGFilter(opt)
-        #self.image_filter2 = HGFilter(opt)
-        #self.image_filter3 = HGFilter(opt)
-        #self.image_filter4 = HGFilter(opt)
-
+        self.image_filter2 = HGFilter(opt)
+        self.image_filter3 = HGFilter(opt)
+        self.image_filter4 = HGFilter(opt)
 
         #self.image_filter = UNet(in_channels=3, depth=5, wf=6, padding=True, batch_norm=True, up_mode='upsample')
 
-        #self.surface_classifier = SIREN(layers=self.opt.mlp_dim[:-1], in_features=self.opt.mlp_dim[0], out_features=1,
-        #                                w0=1.0, w0_initial=30.0, initializer='siren', c=6)
-        self.surface_classifier = SurfaceClassifier(
-            filter_channels=self.opt.mlp_dim,
-            num_views=self.opt.num_views,
-            no_residual=self.opt.no_residual,
-            last_op=nn.Sigmoid())
+        if self.opt.mlp_type == 'mlp' or self.opt.mlp_type == 'mlp_fourier':
+            fourier = self.opt.mlp_type == 'mlp_fourier'
+            self.surface_classifier = SurfaceClassifierLinear(filter_channels=self.opt.mlp_dim, opt=opt, use_fourier = fourier, num_views=self.opt.num_views, no_residual=self.opt.no_residual, last_op=nn.Sigmoid())
+        elif self.opt.mlp_type == 'conv1d':
+            self.surface_classifier = SurfaceClassifier(filter_channels=self.opt.mlp_dim, num_views=self.opt.num_views, no_residual=self.opt.no_residual, last_op=nn.Sigmoid())
+        elif self.opt.mlp_type == 'siren':
+            self.surface_classifier = SIREN(layers=self.opt.mlp_dim[:-1], in_features=self.opt.mlp_dim[0], out_features=1, w0=1.0, w0_initial=30.0, initializer='siren', c=6)
+        else:
+            raise RuntimeError("MLP Type is unknown!")
 
-        self.normalizer = DepthNormalizer(opt)
-
+        self.gauss = Fourier(opt)
+        #self.gauss = GaussianFourierFeatureTransform(3,64)
         # This is a list of [B x Feat_i x H x W] features
         self.im_feat_list = []
         self.tmpx = None
@@ -75,15 +76,19 @@ class HGPIFuNet(BasePIFuNet):
         self.im_feat_list = []
 
         for idx, img in enumerate(images):
-            #if idx == 0:
-            #    feat, _, _ = self.image_filter1(img)
-            #elif idx == 1:
-            #    feat, _, _ = self.image_filter2(img)
-            #elif idx == 2:
-            #    feat, _, _ = self.image_filter3(img)
-            #elif idx == 3:
-            #    feat, _, _ = self.image_filter4(img)
-            feat, _, _ = self.image_filter1(img)
+            #img = self.gauss(img)
+
+            if idx == 0:
+                feat, _, _ = self.image_filter1(img)
+            elif idx == 1:
+                feat, _, _ = self.image_filter2(img)
+            elif idx == 2:
+                feat, _, _ = self.image_filter3(img)
+            elif idx == 3:
+                feat, _, _ = self.image_filter4(img)
+
+
+            #feat, _, _ = self.image_filter1(img)
 
             # If it is not in training, only produce the last im_feat
             #if not self.training:
@@ -96,7 +101,52 @@ class HGPIFuNet(BasePIFuNet):
         #if not self.training:
             #self.im_feat_list = [self.im_feat_list[-1]]
 
-    def calc_normal(self, points, calibs, imgSizes, transforms=None, labels=None, delta=0.001, fd_type='forward'):
+    def calc_pred(self, points, calibs, imgSizes, transforms=None):
+        xyz = self.projection(points, calibs, transforms)
+        xy = xyz[:, :2, :]
+
+        if self.opt.skip_hourglass:
+            tmpx_local_feature = self.index(self.tmpx, xy)
+
+        point_local_feat_list = []
+
+        # We do this for every image per batch
+        for idx, im_feat_list in enumerate(self.im_feat_list):
+            for im_feat in im_feat_list:
+                # We need to adjust the UV coordinates now because each image has a different size
+                currentXY = xy[idx::self.num_views]
+
+                sizes = imgSizes[idx::self.num_views].unsqueeze(2)
+                currentXY = currentXY * sizes
+
+                point_local_feat = self.index(im_feat, currentXY)
+                point_local_feat_list.append(point_local_feat)
+
+
+        currentNumStacks = len(self.im_feat_list[0])
+        pred = None
+
+        for i in range(currentNumStacks):
+            multi = torch.cat(point_local_feat_list[i::currentNumStacks], dim=1)
+            points_trimmed = points[::self.num_views, :, :]
+            points_fourier = self.gauss(points_trimmed)
+            multi = torch.cat([multi, points_fourier], dim=1)
+
+            # Reshape for SIREN
+            if self.opt.mlp_type == 'mlp' or self.opt.mlp_type == 'mlp_fourier' or self.opt.mlp_type == 'siren':
+                batchsize = multi.shape[0]
+                multi = multi.permute(0,2,1)
+                multi = multi.reshape((multi.shape[0], multi.shape[1], multi.shape[2]))
+
+            pred = self.surface_classifier(multi)
+
+            # SIREN Reshape
+            if self.opt.mlp_type == 'mlp' or self.opt.mlp_type == 'mlp_fourier' or self.opt.mlp_type == 'siren':
+                pred = pred.reshape((batchsize, 1, -1))
+
+        return pred
+
+    def calc_normal(self, points, calibs, imgSizes, transforms=None, labels=None, delta=0.0001, fd_type='forward'):
         '''
         return surface normal in 'model' space.
         it computes normal only in the last stack.
@@ -121,43 +171,8 @@ class HGPIFuNet(BasePIFuNet):
         points_all = torch.stack([points, pdx, pdy, pdz], 3)
         points_all = points_all.view(*points.size()[:2], -1)
 
-        xyz = self.projection(points_all, calibs, transforms)
-        xy = xyz[:, :2, :]
-
-        #im_feat = self.im_feat_list[-1]
-        #sp_feat = self.spatial_enc(xyz, calibs=calibs)
-
-        point_local_feat_list = []
-        for idx, im_feat_list in enumerate(self.im_feat_list):
-            for im_feat in im_feat_list:
-
-                #We need to adjust the UV coordinates now because each image has a different size
-                currentXY = xy[idx::self.num_views]
-
-                sizes = imgSizes[idx::self.num_views].unsqueeze(2)
-                currentXY = currentXY * sizes
-
-                point_local_feat = self.index(im_feat, currentXY)
-                point_local_feat_list.append(point_local_feat)
-
-        currentNumStacks = len(self.im_feat_list[0])
-
-        preds = []
-        for i in range(currentNumStacks):
-            multi = torch.cat(point_local_feat_list[i::currentNumStacks], dim=1)
-            multi = torch.cat([multi, points_all[::self.num_views, :, :]], dim=1)
-
-            pred = self.surface_classifier(multi)
-            preds.append(pred)
-
-        pred = preds[-1]
-        pred = pred.view(multi.shape[0], 1, -1, 4)  # (B, 1, N, 4)
-
-        #point_local_feat_list = [self.index(im_feat, xy), sp_feat]
-        #point_local_feat = torch.cat(point_local_feat_list, 1)
-
-        #pred = self.mlp(point_local_feat)[0]
-        #pred = pred.view(*pred.size()[:2], -1, 4)  # (B, 1, N, 4)
+        pred = self.calc_pred(points_all, calibs, imgSizes, transforms)
+        pred = pred.view(pred.shape[0], 1, -1, 4)  # (B, 1, N, 4)
 
         # divide by delta is omitted since it's normalized anyway
         dfdx = pred[:, :, :, 1] - pred[:, :, :, 0]
@@ -185,46 +200,8 @@ class HGPIFuNet(BasePIFuNet):
         if labels is not None:
             self.labels = labels
 
-        xyz = self.projection(points, calibs, transforms)
-        xy = xyz[:, :2, :]
-
-        if self.opt.skip_hourglass:
-            tmpx_local_feature = self.index(self.tmpx, xy)
-
-        point_local_feat_list = []
-
-        #We do this for every image per batch
-        for idx, im_feat_list in enumerate(self.im_feat_list):
-            for im_feat in im_feat_list:
-                #We need to adjust the UV coordinates now because each image has a different size
-                currentXY = xy[idx::self.num_views]
-
-                sizes = imgSizes[idx::self.num_views].unsqueeze(2)
-                currentXY = currentXY * sizes
-
-                point_local_feat = self.index(im_feat, currentXY)
-                point_local_feat_list.append(point_local_feat)
-
-        self.intermediate_preds_list = []
-        currentNumStacks = len(self.im_feat_list[0])
-
-        for i in range(currentNumStacks):
-            multi = torch.cat(point_local_feat_list[i::currentNumStacks], dim=1)
-            multi = torch.cat([multi, points[::self.num_views, :, :]], dim=1)
-
-            #Reshape for SIREN
-            #batchsize = multi.shape[0]
-            #multi = multi.permute(0,2,1)
-            #multi = multi.reshape((multi.shape[0]*multi.shape[1], multi.shape[2]))
-
-            pred = self.surface_classifier(multi)
-
-            #SIREN Reshape
-            #pred = pred.reshape((batchsize, 1, -1))
-
-            self.intermediate_preds_list.append(pred)
-
-        self.preds = self.intermediate_preds_list[-1]
+        self.intermediate_preds_list = [self.calc_pred(points,calibs, imgSizes, transforms)]
+        self.preds = self.intermediate_preds_list[0]
 
     def get_im_feat(self):
         '''
@@ -247,7 +224,7 @@ class HGPIFuNet(BasePIFuNet):
         error['Err(occ)'] /= len(self.intermediate_preds_list)
 
         if self.opt.use_normal_loss and self.nmls is not None and self.labels_nml is not None:
-            error['Err(nml)'] = 1 - self.criteria['nml'](self.nmls, self.labels_nml).unsqueeze(0)
+            error['Err(nml)'] = (1 - self.criteria['nml'](self.nmls, self.labels_nml).unsqueeze(0))*0.2
             error['Err(cmb)'] = error['Err(occ)'] + error['Err(nml)']
         else:
             error['Err(cmb)'] = error['Err(occ)']
@@ -264,10 +241,15 @@ class HGPIFuNet(BasePIFuNet):
         if self.opt.use_normal_loss and points_nml is not None and labels_nml is not None:
             self.calc_normal(points_nml, calibs, imgSizes, labels=labels_nml)
 
+            gt_labels_rgb = (labels_nml[0].cpu().detach().numpy() + 1) / 0.5
+            pred_labels_rgb = (self.nmls[0].cpu().detach().numpy() + 1) / 0.5
+            save_samples_rgb('pointclouds/normals_gt.ply', points_nml[0].cpu().detach().numpy().T, gt_labels_rgb.T)
+            save_samples_rgb('pointclouds/normals_pred.ply', points_nml[0].cpu().detach().numpy().T, pred_labels_rgb.T)
+
         # get the prediction
         res = self.get_preds()
 
         # get the error
         error = self.get_error()
 
-        return res, error
+        return res, self.nmls,  error

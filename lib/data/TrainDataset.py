@@ -16,7 +16,7 @@ from PIL.ImageFilter import GaussianBlur
 import trimesh
 import logging
 import math
-from ..train_util import make_rotate
+from ..train_util import make_rotate, save_samples_rgb, save_samples_truncted_prob
 
 log = logging.getLogger('trimesh')
 log.setLevel(40)
@@ -33,13 +33,13 @@ class TrainDataset(Dataset):
 
         sub_dir = "training" if self.is_train else "test"
 
-        self.use_normals_input = True
+        self.use_normals_input = opt.use_normal_input
         self.use_normals = self.opt.use_normal_loss
 
         # Path setup
         self.root = os.path.join(self.opt.dataroot, sub_dir)
-        self.B_MIN = np.array([-0.5, -0.5, -0.55])
-        self.B_MAX = np.array([0.5, 0.5, 0.55])
+        self.B_MIN = np.array([-0.55, -0.55, -0.55])
+        self.B_MAX = np.array([0.55, 0.55, 0.55])
 
         self.load_size = self.opt.loadSize
         self.num_views = self.opt.num_views
@@ -57,7 +57,7 @@ class TrainDataset(Dataset):
             #transforms.Resize(self.load_size),
             transforms.ToTensor(),
             #transforms.Normalize(0.5, 0.5)
-            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+            #transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
         ])
 
         # augmentation
@@ -150,6 +150,15 @@ class TrainDataset(Dataset):
         bb = datasetInterfaceUnity.getBoundingBox(sample_path)
         views = viewUtils.trimViewsByBB(views, bb)
 
+        # random flip
+        flip = False
+        if self.opt.random_flip and np.random.rand() > 0.5:
+            flip = True
+
+        rand_scale = 1.0
+        if self.opt.random_scale:
+            rand_scale = random.uniform(0.8, 1)
+
         for idx, yaw in enumerate(yaw_list):
             pitch = 0
             
@@ -191,6 +200,10 @@ class TrainDataset(Dataset):
             if (yaw == 90 and pitch == 0) or (yaw == 90 and pitch == 90):
                 render = ImageOps.mirror(render)
 
+                if self.is_train and flip:
+                    scale_intrinsic[0, 0] *= -1
+                    render = transforms.RandomHorizontalFlip(p=1.0)(render)
+
             if self.is_train:
                 # Pad images
                 #pad_size = int(0.1 * self.load_size)
@@ -199,14 +212,8 @@ class TrainDataset(Dataset):
                 w, h = render.size
                 th, tw = self.load_size, self.load_size
 
-                # random flip
-                if self.opt.random_flip and np.random.rand() > 0.5:
-                    scale_intrinsic[0, 0] *= -1
-                    render = transforms.RandomHorizontalFlip(p=1.0)(render)
-
                 # random scale
-                if self.opt.random_scale:
-                    rand_scale = random.uniform(0.8, 1.2)
+                if rand_scale != 1.0:
                     w = int(rand_scale * w)
                     h = int(rand_scale * h)
                     render = render.resize((w, h), Image.BILINEAR)
@@ -264,8 +271,8 @@ class TrainDataset(Dataset):
 
         #bounds = {'b_min': self.B_MIN, 'b_max': self.B_MAX}
         bb = datasetInterfaceUnity.getBoundingBox(os.path.join(self.root, subject))
-        minBB = np.array([bb['min'][0], bb['min'][1], bb['min'][2] - 0.05])
-        maxBB = np.array([bb['max'][0], bb['max'][1], bb['max'][2] + 0.05])
+        minBB = np.array([bb['min'][0] - 0.05, bb['min'][1] - 0.05, bb['min'][2] - 0.05])
+        maxBB = np.array([bb['max'][0] + 0.05, bb['max'][1] + 0.05, bb['max'][2] + 0.05])
         bounds = {'b_min': minBB - 0.5, 'b_max': maxBB - 0.5}
 
         normals_points = None
@@ -279,7 +286,7 @@ class TrainDataset(Dataset):
                 normals_points = self.points_normals_dic[subject]
                 normals = self.normals_dic[subject]
         else:
-            points, sdf, normals_points, normals = loadData(self.root, subject, self.use_normals_input)
+            points, sdf, normals_points, normals = loadData(self.root, subject,  self.use_normals)
 
         #Occupany sampling
         #Load more points than we need to we can balance them later
@@ -299,6 +306,8 @@ class TrainDataset(Dataset):
             normals = normals[indexNormal].T
             normals_points = torch.Tensor(normals_points).float()
             normals = torch.Tensor(normals).float()
+            normals_rgb = (normals + 1) / 0.5
+            #save_samples_rgb('pointclouds/normals_{0}.ply'.format(subject), normals_points.T, normals_rgb.T)
 
         #sdf = np.clip(sdf, -self.opt.sigma, self.opt.sigma)
         #sdf = sdf * (1/self.opt.sigma)
@@ -308,18 +317,30 @@ class TrainDataset(Dataset):
         #labels = np.expand_dims(sdf, 0)
 
         #Balance all points to be even 50/50 outside/inside
-        inside_points = sample_points[inside]
-        outside_points = sample_points[np.logical_not(inside)]
+        if self.opt.sample_on_surface and self.use_normals:
+            inside_points = sample_points[inside]
+            outside_points = sample_points[np.logical_not(inside)]
 
-        nin = inside_points.shape[0]
-        inside_points = inside_points[:self.num_sample_inout // 2] if nin > self.num_sample_inout // 2 else inside_points
-        outside_points = outside_points[:self.num_sample_inout // 2] if nin > self.num_sample_inout // 2 else outside_points[:(self.num_sample_inout - nin)]
+            nin = inside_points.shape[0]
+            inside_points = inside_points[:self.num_sample_inout // 3] if nin > self.num_sample_inout // 3 else inside_points
+            outside_points = outside_points[:self.num_sample_inout // 3] if nin > self.num_sample_inout // 3 else outside_points[:(self.num_sample_inout - nin)]
 
-        samples = np.concatenate([inside_points, outside_points], 0).T
-        labels = np.concatenate([np.ones((1, inside_points.shape[0])), np.zeros((1, outside_points.shape[0]))], 1)
-        #save_samples_truncted_prob('pointclouds/out_{0}.ply'.format(subject), samples.T, labels.T)
-        #save_samples_rgb('pointclouds/normals_{0}.ply'.format(subject), normals_points.T, normals.T)
-        #exit(0)
+            index_surface = np.random.choice(normals_pointsAll.shape[0], self.num_sample_inout - len(inside_points) - len(outside_points), replace=False)
+            surface_points = normals_pointsAll[index_surface].T
+
+            samples = np.concatenate([inside_points, outside_points, surface_points], 0).T
+            labels = np.concatenate([np.ones((1, inside_points.shape[0])), np.zeros((1, outside_points.shape[0])), np.full((1, surface_points.shape[0]), fill_value=0.5)], 1)
+        #Balance all points to be even 50/50 outside/inside
+        else:
+            inside_points = sample_points[inside]
+            outside_points = sample_points[np.logical_not(inside)]
+
+            nin = inside_points.shape[0]
+            inside_points = inside_points[:self.num_sample_inout // 2] if nin > self.num_sample_inout // 2 else inside_points
+            outside_points = outside_points[:self.num_sample_inout // 2] if nin > self.num_sample_inout // 2 else outside_points[:(self.num_sample_inout - nin)]
+
+            samples = np.concatenate([inside_points, outside_points], 0).T
+            labels = np.concatenate([np.ones((1, inside_points.shape[0])), np.zeros((1, outside_points.shape[0]))], 1)
 
         samples = torch.Tensor(samples).float()
         labels = torch.Tensor(labels).float()
@@ -334,7 +355,6 @@ class TrainDataset(Dataset):
     def get_item(self, index):
         sid = index % len(self.subjects)
 
-        # name of the subject 'rp_xxxx_xxx'
         subject = self.subjects[sid]
         res = {
             'name': subject,

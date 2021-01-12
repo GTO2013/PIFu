@@ -39,7 +39,7 @@ def calc_error(opt, net, cuda, dataset, num_tests):
             #ToDO: Normal Loss!
             image_tensor_list, calib_tensor, sample_tensor, label_tensor, img_sizes, points_nml, labels_nml = prepareBatches(batch, cuda, opt)
 
-            res, error = net.forward(image_tensor_list, sample_tensor, calib_tensor, imgSizes=img_sizes,
+            res, nmls, error = net.forward(image_tensor_list, sample_tensor, calib_tensor, imgSizes=img_sizes,
                                       labels=label_tensor, points_nml=points_nml, labels_nml=labels_nml)
 
             IOU, prec, recall = compute_acc(res, label_tensor)

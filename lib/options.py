@@ -8,8 +8,8 @@ class BaseOptions():
         # Datasets related
         g_data = parser.add_argument_group('Data')
         g_data.add_argument('--dataroot', type=str, default='./data', help='path to images (data folder)')
-
         g_data.add_argument('--loadSize', type=int, default=512, help='load size of input image')
+        g_data.add_argument('--use_normal_input', action='store_true')
 
         # Experiment related
         g_exp = parser.add_argument_group('Experiment')
@@ -52,14 +52,11 @@ class BaseOptions():
         g_sample = parser.add_argument_group('Sampling')
         g_sample.add_argument('--sigma', type=float, default=.005, help='perturbation standard deviation for positions')
 
-        #g_sample.add_argument('--num_sample_inout', type=int, default=5000, help='# of sampling points')
+        g_sample.add_argument('--sample_on_surface', default=False, action='store_true', help='Sample on surface for occ')
         g_sample.add_argument('--use_normal_loss', default=False, action='store_true', help='Use normal loss or not')
         g_sample.add_argument('--num_sample_normals', type=int, default=5000, help='# of sampling points')
         g_sample.add_argument('--num_sample_inout', type=int, default=5000, help='# of sampling points')
         g_sample.add_argument('--num_sample_color', type=int, default=0, help='# of sampling points')
-
-        g_sample.add_argument('--z_size', type=float, default=0.5, help='z normalization factor')
-        #g_sample.add_argument('--z_size', type=float, default=300.0, help='z normalization factor')
 
         # Model related
         g_model = parser.add_argument_group('Model')
@@ -79,7 +76,8 @@ class BaseOptions():
         g_model.add_argument('--skip_downsample', action='store_true')
 
         # Classification General
-        g_model.add_argument('--mlp_dim', nargs='+', default=[259, 1024, 512, 256, 128, 1], type=int, help='# of dimensions of mlp')
+        g_model.add_argument('--mlp_type', type=str, default='mlp', help='type of classifier to use')
+        g_model.add_argument('--mlp_dim', nargs='+', default=[256+32, 1024, 512, 256, 128, 1], type=int, help='# of dimensions of mlp')
         g_model.add_argument('--mlp_dim_color', nargs='+', default=[513, 1024, 512, 256, 128, 3],
                              type=int, help='# of dimensions of color mlp')
 
@@ -112,8 +110,8 @@ class BaseOptions():
         parser.add_argument('--load_checkpoint_path', type=str, help='path to save results ply')
         parser.add_argument('--single', type=str, default='', help='single data for training')
         parser.add_argument('--max_train_size', type=int, default=-1, help='max number of training samples')
-        # for single image reconstruction
-        parser.add_argument('--mask_path', type=str, help='path for input mask')
+
+        #for single image reconstruction
         parser.add_argument('--img_path', type=str, help='path for input image')
 
         # aug
