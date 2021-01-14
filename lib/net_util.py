@@ -93,6 +93,15 @@ class Flatten(nn.Module):
     def forward(self, input):
         return input.view(input.size(0), -1)
 
+def se_block(in_block, ch, ratio=16):
+    x = torch.nn.AdaptiveAvgPool2d(1)(in_block)
+    x = torch.nn.Linear(ch//ratio)(x)
+    x = torch.nn.ReLU(x)
+    x = torch.nn.Linear(ch)(x)
+    x = torch.nn.Sigmoid(x)
+
+    return torch.multiply(input=in_block, other=x)
+
 class ConvBlock(nn.Module):
     def __init__(self, in_planes, out_planes, norm='batch', groupNormSize = 32):
         super(ConvBlock, self).__init__()
@@ -128,7 +137,7 @@ class ConvBlock(nn.Module):
         out1 = F.relu(out1, True)
         out1 = self.conv1(out1)
 
-        out2 = self.bn2(out1)
+        out2 = self.bn2(out1,)
         out2 = F.relu(out2, True)
         out2 = self.conv2(out2)
 

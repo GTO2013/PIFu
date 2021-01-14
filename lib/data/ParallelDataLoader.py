@@ -25,7 +25,7 @@ def load_chunk(root_dir, foldersLocal, pointsSDF, sdf, pointsNormals, normals, l
 
     for i, sub_name in enumerate(foldersLocal):
         if psutil.virtual_memory().percent < 85:
-            print("Loading ... {0} / {1}".format(i, len(foldersLocal)))
+            #print("Loading ... {0} / {1}".format(i, len(foldersLocal)))
 
             pointsSDF_l, sdf_l, pointsNormals_l, normals_l = loadData(root_dir, sub_name, loadNormals)
 

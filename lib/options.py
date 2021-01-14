@@ -66,9 +66,9 @@ class BaseOptions():
                              help='instance normalization or batch normalization or group normalization')
 
         # hg filter specify
-        g_model.add_argument('--num_stack', type=int, default=3, help='# of hourglass')
+        g_model.add_argument('--num_stack', type=int, default=2, help='# of hourglass')
         #g_model.add_argument('--num_stack', type=int, default=4, help='# of hourglass')
-        g_model.add_argument('--num_hourglass', type=int, default=3, help='# of stacked layer of hourglass')
+        g_model.add_argument('--num_hourglass', type=int, default=2, help='# of stacked layer of hourglass') #3 before
         g_model.add_argument('--skip_hourglass', action='store_true', help='skip connection in hourglass')
         g_model.add_argument('--hg_down', type=str, default='ave_pool', help='ave pool || conv64 || conv128')
         g_model.add_argument('--hourglass_dim', type=int, default='256', help='256 | 512')
@@ -77,7 +77,7 @@ class BaseOptions():
 
         # Classification General
         g_model.add_argument('--mlp_type', type=str, default='mlp', help='type of classifier to use')
-        g_model.add_argument('--mlp_dim', nargs='+', default=[256+32, 1024, 512, 256, 128, 1], type=int, help='# of dimensions of mlp')
+        g_model.add_argument('--mlp_dim', nargs='+', default=[256+3+4, 1024, 512, 256, 128, 1], type=int, help='# of dimensions of mlp')
         g_model.add_argument('--mlp_dim_color', nargs='+', default=[513, 1024, 512, 256, 128, 3],
                              type=int, help='# of dimensions of color mlp')
 
@@ -125,6 +125,7 @@ class BaseOptions():
 
         # special tasks
         self.initialized = True
+
         return parser
 
     def gather_options(self):
@@ -150,6 +151,23 @@ class BaseOptions():
         message += '----------------- End -------------------'
         print(message)
 
+    def setNameFromOptions(self, opt):
+        baseName = opt.name
+        input_type = "nml" if opt.use_normal_input else "bp"
+        filter_hg = str(opt.hourglass_dim)
+        sample_count = str(opt.num_sample_inout)
+        nml_loss = "nml_loss" if opt.use_normal_loss else ""
+        skip_ds = "sds" if opt.skip_downsample else ""
+        mlp_type = opt.mlp_type
+        mlp_sizes = '_'.join(str(x) for x in opt.mlp_dim)
+
+        return '_'.join(str(x) for x in [baseName,input_type, filter_hg, sample_count, nml_loss, skip_ds, mlp_type, mlp_sizes])
+
     def parse(self):
         opt = self.gather_options()
+
+        #if opt.max_train_size != -1:
+            #opt.no_gen_mesh = True
+
+        opt.name = self.setNameFromOptions(opt)
         return opt

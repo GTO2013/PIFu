@@ -1,6 +1,6 @@
 from torch.utils.data import Dataset
 import sys
-
+import torch.nn.functional as F
 from .ParallelDataLoader import loadData, loadDataParallel
 
 sys.path.append(r'C:\Blueprint2Car')
@@ -13,7 +13,8 @@ import torchvision.transforms as transforms
 from PIL import Image, ImageOps
 import torch
 from PIL.ImageFilter import GaussianBlur
-import trimesh
+import cv2
+import matplotlib.pyplot as plt
 import logging
 import math
 from ..train_util import make_rotate, save_samples_rgb, save_samples_truncted_prob
@@ -71,6 +72,7 @@ class TrainDataset(Dataset):
         self.sdf_dic = None
         self.points_normals_dic = None
         self.normals_dic = None
+        self.views = None
 
         points, sdf, pointsNormals, normals = loadDataParallel(self.root, self.subjects, self.use_normals)
 
@@ -117,6 +119,20 @@ class TrainDataset(Dataset):
         else:
             return '%d_%d_%02d' % (yaw, pitch, 0)
 
+    def set_views_from_path(self, subject):
+        sample_path = os.path.join(self.root, subject)
+        if self.use_normals_input:
+            views = datasetInterfaceProcessed.getViewsNormals(sample_path)
+        else:
+            views = datasetInterfaceProcessed.getViewsBlueprint(sample_path)
+
+        views = viewUtils.resizeSquareViews(views, self.load_size)
+        bb = datasetInterfaceUnity.getBoundingBox(sample_path)
+        self.views = viewUtils.trimViewsByBB(views, bb)
+
+    def set_views(self, views):
+        self.views = views
+
     def get_render(self, subject, num_views):
         '''
         Return the render data
@@ -140,16 +156,6 @@ class TrainDataset(Dataset):
         render_list = []
         extrinsic_list = []
 
-        sample_path = os.path.join(self.root, subject)
-        if self.use_normals_input:
-            views = datasetInterfaceProcessed.getViewsNormals(sample_path)
-        else:
-            views = datasetInterfaceProcessed.getViewsBlueprint(sample_path)
-
-        views = viewUtils.resizeSquareViews(views, self.load_size)
-        bb = datasetInterfaceUnity.getBoundingBox(sample_path)
-        views = viewUtils.trimViewsByBB(views, bb)
-
         # random flip
         flip = False
         if self.opt.random_flip and np.random.rand() > 0.5:
@@ -167,7 +173,7 @@ class TrainDataset(Dataset):
 
             poseName = self.angles_to_name(yaw, pitch)
 
-            ortho_ratio = 1.0
+            ortho_ratio = 1
             scale = self.opt.loadSize
             center = np.array([0, 0, 0], np.float32)
             R = np.matmul(make_rotate(math.radians(pitch), 0, 0), make_rotate(0, math.radians(yaw), 0))
@@ -177,9 +183,9 @@ class TrainDataset(Dataset):
             extrinsic = np.concatenate([extrinsic, np.array([0, 0, 0, 1]).reshape(1, 4)], 0)
             # Match camera space to image pixel space
             scale_intrinsic = np.identity(4)
-            scale_intrinsic[0, 0] = scale / ortho_ratio
-            scale_intrinsic[1, 1] = -scale / ortho_ratio
-            scale_intrinsic[2, 2] = scale / ortho_ratio
+            scale_intrinsic[0, 0] = scale
+            scale_intrinsic[1, 1] = -scale
+            scale_intrinsic[2, 2] = scale
             # Match image pixel space to image uv space
             uv_intrinsic = np.identity(4)
             uv_intrinsic[0, 0] = 1.0 / float(self.opt.loadSize // 2)
@@ -191,7 +197,7 @@ class TrainDataset(Dataset):
             #dataRen = np.load(render_path)
             #render = Image.fromarray(dataRen, mode='RGB' if self.use_normals else "L")
 
-            render = Image.fromarray(views[poseName], mode='RGB' if self.use_normals_input else "L")
+            render = Image.fromarray(self.views[poseName], mode='RGB' if self.use_normals_input else "L")
             #render = Image.open(render_path).convert('L')
             #render = Image.open(render_path).convert('RGB')
 
@@ -251,13 +257,11 @@ class TrainDataset(Dataset):
 
             render = self.to_tensor(render)
 
-            #render_list.append(render)
             render_list.append(render)
             calib_list.append(calib)
             extrinsic_list.append(extrinsic)
 
         return {
-            #'img': torch.stack(render_list, dim=0),
             'img': render_list,
             'calib': torch.stack(calib_list, dim=0),
             'extrinsic': torch.stack(extrinsic_list, dim=0),
@@ -306,8 +310,12 @@ class TrainDataset(Dataset):
             normals = normals[indexNormal].T
             normals_points = torch.Tensor(normals_points).float()
             normals = torch.Tensor(normals).float()
-            normals_rgb = (normals + 1) / 0.5
-            #save_samples_rgb('pointclouds/normals_{0}.ply'.format(subject), normals_points.T, normals_rgb.T)
+
+            # Make sure they are normalized
+            normals = F.normalize(normals, dim=0, eps=1e-8)
+            if self.opt.debug:
+                normals_rgb = (normals + 1) / 0.5
+                save_samples_rgb('pointclouds/normals_{0}.ply'.format(subject), normals_points.T, normals_rgb.T)
 
         #sdf = np.clip(sdf, -self.opt.sigma, self.opt.sigma)
         #sdf = sdf * (1/self.opt.sigma)
@@ -316,7 +324,7 @@ class TrainDataset(Dataset):
         #samples = sample_points.T
         #labels = np.expand_dims(sdf, 0)
 
-        #Balance all points to be even 50/50 outside/inside
+        #Balance all points to be even 33/33/33 inside, outside, on surface
         if self.opt.sample_on_surface and self.use_normals:
             inside_points = sample_points[inside]
             outside_points = sample_points[np.logical_not(inside)]
@@ -325,11 +333,11 @@ class TrainDataset(Dataset):
             inside_points = inside_points[:self.num_sample_inout // 3] if nin > self.num_sample_inout // 3 else inside_points
             outside_points = outside_points[:self.num_sample_inout // 3] if nin > self.num_sample_inout // 3 else outside_points[:(self.num_sample_inout - nin)]
 
-            index_surface = np.random.choice(normals_pointsAll.shape[0], self.num_sample_inout - len(inside_points) - len(outside_points), replace=False)
-            surface_points = normals_pointsAll[index_surface].T
+            rest_count = self.num_sample_inout - len(inside_points) - len(outside_points)
+            normals_points_surface = normals_points.T[:rest_count]
 
-            samples = np.concatenate([inside_points, outside_points, surface_points], 0).T
-            labels = np.concatenate([np.ones((1, inside_points.shape[0])), np.zeros((1, outside_points.shape[0])), np.full((1, surface_points.shape[0]), fill_value=0.5)], 1)
+            samples = np.concatenate([inside_points, outside_points, normals_points_surface], 0).T
+            labels = np.concatenate([np.ones((1, inside_points.shape[0])), np.zeros((1, outside_points.shape[0])), np.full((1, normals_points_surface.shape[0]), fill_value=0.5)], 1)
         #Balance all points to be even 50/50 outside/inside
         else:
             inside_points = sample_points[inside]
@@ -356,6 +364,8 @@ class TrainDataset(Dataset):
         sid = index % len(self.subjects)
 
         subject = self.subjects[sid]
+        self.set_views_from_path(subject)
+
         res = {
             'name': subject,
             'mesh_path': os.path.join(self.root, subject + '.obj'),
@@ -373,23 +383,23 @@ class TrainDataset(Dataset):
         render_data = self.get_render(subject, num_views=self.num_views)
         res.update(render_data)
 
-        # img = np.uint8((np.transpose(render_data['img'][0].numpy(), (1, 2, 0)) * 0.5 + 0.5)[:, :, ::-1] * 255.0)
-        # rot = render_data['calib'][0,:3, :3]
-        # trans = render_data['calib'][0,:3, 3:4]
-        # pts = torch.addmm(trans, rot, sample_data['samples'][:, sample_data['labels'][0] > 0.5])  # [3, N]
-        # pts = 0.5 * (pts.numpy().T + 1.0) * render_data['img'].size(2)
-        # for p in pts:
-        #     img = cv2.circle(img, (p[0], p[1]), 2, (0,255,0), -1)
-        # cv2.imshow('test', img)
-        # cv2.waitKey(1)
+        if self.opt.debug:
+            for i in range(4):
+                img = np.uint8((np.transpose(render_data['img'][i].numpy(), (1, 2, 0)) * 0.5 + 0.5)[:, :, ::-1] * 255.0)
+                rot = render_data['calib'][i,:3, :3]
+                trans = render_data['calib'][i,:3, 3:4]
+                pts = torch.addmm(trans, rot, sample_data['samples'][:, sample_data['labels'][0] > 0.5])  # [3, N]
+                pts = 0.5 * (pts.numpy().T + 1.0) * self.opt.loadSize
+                for p in pts:
+                    img = cv2.circle(img, (p[0], p[1]), 2, (0,255,0), -1)
+
+                plt.imshow(img, cmap='gray')
+                plt.show()
 
         if self.num_sample_color:
             color_data = self.get_color_sampling(subject, yid=yid, pid=pid)
             res.update(color_data)
         return res
-        # except Exception as e:
-        #     print(e)
-        #     return self.get_item(index=random.randint(0, self.__len__() - 1))
 
     def __getitem__(self, index):
         return self.get_item(index)

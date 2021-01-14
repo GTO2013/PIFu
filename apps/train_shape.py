@@ -16,6 +16,7 @@ from lib.data import *
 from lib.model import *
 from lib.train_metrics import calc_error
 import apps.tensorboard_wrapper as tb
+from lib.custom_collate import MultiViewCollator,move_to_gpu
 
 # get options
 opt = BaseOptions().parse()
@@ -35,28 +36,26 @@ def train(opt):
     device_ids = [int(i) for i in opt.gpu_ids.split(",")]
     cuda = torch.device('cuda:%d' % device_ids[0])
 
+    tb.initWriter(opt)
+
     train_dataset = TrainDataset(opt, phase='train')
     test_dataset = TrainDataset(opt, phase='test')
 
-    print("Creating loader...")
+    print("Loading training data...")
+    coll = MultiViewCollator(opt)
     # create data loader
-    #train_data_loader = DataLoader(train_dataset,
-                                   #batch_size=opt.batch_size, shuffle=not opt.serial_batches,
-                                   #num_workers=opt.num_threads, pin_memory=opt.pin_memory)
     train_data_loader = DataLoader(train_dataset,
-                                    batch_size=None, shuffle=not opt.serial_batches,
-                                    num_workers=opt.num_threads, pin_memory=opt.pin_memory)
+                                   batch_size=opt.batch_size, shuffle=not opt.serial_batches,collate_fn=coll,
+                                   num_workers=opt.num_threads, pin_memory=opt.pin_memory)
 
     print('train data size: ', len(train_data_loader))
-
     # NOTE: batch size should be 1 and use all the points for evaluation
-   # test_data_loader = DataLoader(test_dataset,
-                                  #batch_size=None, shuffle=False,
-                                  #num_workers=opt.num_threads, pin_memory=opt.pin_memory)
-    #print('test data size: ', len(test_data_loader))
+    test_data_loader = DataLoader(test_dataset,
+                                  batch_size=1, shuffle=True, collate_fn=coll,
+                                  num_workers=opt.num_threads, pin_memory=opt.pin_memory)
+    print('test data size: ', len(test_data_loader))
 
     # create net
-    #netG = HGPIFuNet(opt, projection_mode).to(device=cuda)
     print("Num GPUs: " + str(torch.cuda.device_count()))
 
     if len(device_ids) > 1:
@@ -108,20 +107,13 @@ def train(opt):
         set_train()
         iter_data_time = time.time()
 
-        train_data_loader_iter = iter(train_data_loader)
-        for train_idx in range(0, len(train_data_loader_iter) - opt.batch_size, opt.batch_size):
+        for train_idx, train_data in enumerate(train_data_loader):
             iter_start_time = time.time()
-            batches = [next(train_data_loader_iter) for _ in range(opt.batch_size)]
-
-            image_tensor_list, calib_tensor, sample_tensor, label_tensor,\
-            img_sizes, points_nml, labels_nml = prepareBatches(batches, cuda, opt)
-
-            #image_tensor, calib_tensor = reshape_multiview_tensors(image_tensor, calib_tensor)
-
             optimizerG.zero_grad()
 
-            res, nmls, error = netG.forward(image_tensor_list, sample_tensor, calib_tensor, imgSizes=img_sizes,
-                                      labels=label_tensor, points_nml=points_nml, labels_nml=labels_nml)
+            train_data = move_to_gpu(train_data,cuda)
+            res, nmls, error = netG.forward(train_data['images'], train_data['samples'], train_data['calib'], imgSizes=train_data['size'],
+                                      labels=train_data['labels'], points_nml=train_data['samples_normals'], labels_nml=train_data['normals'])
 
             error['Err(cmb)'].mean().backward()
             optimizerG.step()
@@ -138,8 +130,6 @@ def train(opt):
                     'Name: {0} | Epoch: {1} | {2}/{3} | Err (Cmb): {4:.06f} | Err(Occ): {5:.06f} |  Err(Nml): {6:.06f} | LR: {7:.06f} | dataT: {8:.05f} | netT: {9:.05f} | ETA: {10:02d}:{11:02d}'.format(
                         opt.name, epoch, train_idx, len(train_data_loader), error['Err(cmb)'].mean().item(), error['Err(occ)'].mean().item(), normal_loss, lr, iter_start_time - iter_data_time, iter_net_time - iter_start_time, int(eta // 60),int(eta - 60 * (eta // 60))))
 
-                tb.updateDuringEpoch(train_idx, error['Err(cmb)'].mean().item(), error['Err(occ)'].mean().item(), normal_loss, iter_net_time - iter_start_time)
-
             if train_idx % opt.freq_save == 0 and train_idx != 0:
                 torch.save(netG.state_dict(), '%s/%s/netG_latest' % (opt.checkpoints_path, opt.name))
                 torch.save(netG.state_dict(), '%s/%s/netG_epoch_%d' % (opt.checkpoints_path, opt.name, epoch))
@@ -147,7 +137,7 @@ def train(opt):
             if train_idx % opt.freq_save_ply == 0:
                 save_path = '%s/%s/pred.ply' % (opt.results_path, opt.name)
                 r = res[0].cpu()
-                points = sample_tensor[0].transpose(0, 1).cpu()
+                points = train_data['samples'][0].transpose(0, 1).cpu()
                 save_samples_truncted_prob(save_path, points.detach().numpy(), r.detach().numpy())
 
             iter_data_time = time.time()
@@ -166,7 +156,7 @@ def train(opt):
             if not opt.no_num_eval:
                 test_losses = {}
                 print('calc error (test) ...')
-                test_errors = calc_error(opt, netG, cuda, test_dataset, 100)
+                test_errors = calc_error(netG, cuda, test_data_loader, 100)
                 print('eval test MSE: {0:06f} IOU: {1:06f} prec: {2:06f} recall: {3:06f}'.format(*test_errors))
                 MSE, IOU, prec, recall = test_errors
                 test_losses['MSE(test)'] = MSE
@@ -176,7 +166,7 @@ def train(opt):
 
                 print('calc error (train) ...')
                 train_dataset.is_train = False
-                train_errors = calc_error(opt, netG, cuda, train_dataset, 100)
+                train_errors = calc_error(netG, cuda, train_data_loader, 100)
                 train_dataset.is_train = True
                 print('eval train MSE: {0:06f} IOU: {1:06f} prec: {2:06f} recall: {3:06f}'.format(*train_errors))
                 MSE, IOU, prec, recall = train_errors
@@ -185,24 +175,31 @@ def train(opt):
                 test_losses['prec(train)'] = prec
                 test_losses['recall(train)'] = recall
 
-            #if not opt.no_gen_mesh:
+            if not opt.no_gen_mesh:
                 print('generate mesh (test) ...')
+                test_data = None
+                train_data = None
                 for gen_idx in tqdm(range(opt.num_gen_mesh_test)):
-                    test_data = test_dataset[random.randint(0, len(test_dataset) - 1)]
-                    save_path = '%s/%s/test/test_eval_epoch%d_%s.obj' % (
-                        opt.results_path, opt.name, epoch, test_data['name'])
-                    mesh_test = gen_mesh(opt, netG, cuda, test_data, save_path)
+                    #test_data = test_dataset[random.randint(0, len(test_dataset) - 1)]
+                    test_data = test_dataset[6]
+                    test_data_batched = coll([test_data])
+                    test_data_batched = move_to_gpu(test_data_batched, cuda)
+
+                    save_path = '%s/%s/test/test_eval_epoch%d_%s.obj' % (opt.results_path, opt.name, epoch, test_data['name'])
+                    mesh_test = gen_mesh(opt, netG, cuda, test_data_batched, save_path)
 
                 print('generate mesh (train) ...')
                 train_dataset.is_train = False
                 for gen_idx in tqdm(range(opt.num_gen_mesh_test)):
                     train_data = train_dataset[random.randint(0, len(test_dataset) - 1)]
-                    save_path = '%s/%s/training/train_eval_epoch%d_%s.obj' % (
-                        opt.results_path, opt.name, epoch, train_data['name'])
-                    mesh_train = gen_mesh(opt, netG, cuda, train_data, save_path)
+                    train_data_batched = coll([train_data])
+                    train_data_batched = move_to_gpu(train_data_batched, cuda)
+
+                    save_path = '%s/%s/training/train_eval_epoch%d_%s.obj' % (opt.results_path, opt.name, epoch, train_data['name'])
+                    mesh_train = gen_mesh(opt, netG, cuda, train_data_batched, save_path)
                 train_dataset.is_train = True
 
-            tb.updateAfterEpoch(epoch, train_errors, test_errors, mesh_train, mesh_test)
+                tb.updateAfterEpoch(epoch, train_errors, test_errors, train_data['img'], test_data['img'])
 
         if len(device_ids) > 1:
             netG.device_ids = device_ids

@@ -8,6 +8,8 @@ from .HGFilters import *
 from .UnetFilter import UNet
 from ..net_util import init_net
 from siren import SIREN
+import matplotlib.pyplot as plt
+
 
 class HGPIFuNet(BasePIFuNet):
     '''
@@ -48,7 +50,11 @@ class HGPIFuNet(BasePIFuNet):
             fourier = self.opt.mlp_type == 'mlp_fourier'
             self.surface_classifier = SurfaceClassifierLinear(filter_channels=self.opt.mlp_dim, opt=opt, use_fourier = fourier, num_views=self.opt.num_views, no_residual=self.opt.no_residual, last_op=nn.Sigmoid())
         elif self.opt.mlp_type == 'conv1d':
+            #layers = [64+3+2+2, 256, 256, 128]
+            #layersFinal = [128*4, 512, 256, 128, 1]
             self.surface_classifier = SurfaceClassifier(filter_channels=self.opt.mlp_dim, num_views=self.opt.num_views, no_residual=self.opt.no_residual, last_op=nn.Sigmoid())
+            #self.surface_classifier = SurfaceClassifier(filter_channels=layers, num_views=self.opt.num_views,no_residual=self.opt.no_residual, last_op=nn.ReLU())
+            #self.surface_classifier_final = SurfaceClassifier(filter_channels=layersFinal, num_views=self.opt.num_views,no_residual=self.opt.no_residual, last_op=nn.Sigmoid())
         elif self.opt.mlp_type == 'siren':
             self.surface_classifier = SIREN(layers=self.opt.mlp_dim[:-1], in_features=self.opt.mlp_dim[0], out_features=1, w0=1.0, w0_initial=30.0, initializer='siren', c=6)
         else:
@@ -64,6 +70,7 @@ class HGPIFuNet(BasePIFuNet):
         self.labels_nml = None
 
         self.intermediate_preds_list = []
+        self.images = []
 
         init_net(self)
 
@@ -74,6 +81,7 @@ class HGPIFuNet(BasePIFuNet):
         :param images: [B, C, H, W] input images
         '''
         self.im_feat_list = []
+        self.images = images
 
         for idx, img in enumerate(images):
             #img = self.gauss(img)
@@ -118,8 +126,19 @@ class HGPIFuNet(BasePIFuNet):
 
                 sizes = imgSizes[idx::self.num_views].unsqueeze(2)
                 currentXY = currentXY * sizes
+                skip = torch.cat([self.images[idx], im_feat], dim=1)
 
-                point_local_feat = self.index(im_feat, currentXY)
+                #pixel_local = self.index(self.images[idx], currentXY).cpu().detach().numpy()
+                #img_local = np.swapaxes(self.images[idx][0].cpu().detach().numpy(),0,2)
+                #new_img = np.zeros_like(img_local)
+                #new_xy = currentXY.cpu().detach().numpy()[0] * np.reshape(new_img.shape[:2],(2,1))
+                #new_xy = ((new_xy+1)/2).astype(np.uint32)
+                #new_img[new_xy.T[:,0], new_xy.T[:,1]] = pixel_local[0].T
+
+                #plt.imshow(new_img, cmap='gray')
+                #plt.show()
+
+                point_local_feat = self.index(skip, currentXY)
                 point_local_feat_list.append(point_local_feat)
 
 
@@ -129,8 +148,8 @@ class HGPIFuNet(BasePIFuNet):
         for i in range(currentNumStacks):
             multi = torch.cat(point_local_feat_list[i::currentNumStacks], dim=1)
             points_trimmed = points[::self.num_views, :, :]
-            points_fourier = self.gauss(points_trimmed)
-            multi = torch.cat([multi, points_fourier], dim=1)
+            #points_fourier = self.gauss(points_trimmed)
+            multi = torch.cat([multi, points_trimmed], dim=1)
 
             # Reshape for SIREN
             if self.opt.mlp_type == 'mlp' or self.opt.mlp_type == 'mlp_fourier' or self.opt.mlp_type == 'siren':
@@ -145,6 +164,45 @@ class HGPIFuNet(BasePIFuNet):
                 pred = pred.reshape((batchsize, 1, -1))
 
         return pred
+
+    def calc_pred_parallel(self, points, calibs, imgSizes, transforms=None):
+        xyz = self.projection(points, calibs, transforms)
+        xy = xyz[:, :2, :]
+
+        if self.opt.skip_hourglass:
+            tmpx_local_feature = self.index(self.tmpx, xy)
+
+        preds = []
+        # We do this for every image per batch
+        for idx, im_feat_list in enumerate(self.im_feat_list):
+            for im_feat in im_feat_list:
+                # We need to adjust the UV coordinates now because each image has a different size
+                currentXY = xy[idx::self.num_views]
+
+                sizes = imgSizes[idx::self.num_views].unsqueeze(2)
+                currentXY = currentXY * sizes
+
+                multi = self.index(im_feat, currentXY)
+                points_trimmed = points[::self.num_views, :, :]
+                rep = torch.repeat_interleave(imgSizes[idx::self.num_views].unsqueeze(2), repeats=multi.shape[2], dim=2)
+                multi = torch.cat([multi, points_trimmed, currentXY, rep], dim=1)
+
+                # Reshape for SIREN
+                if self.opt.mlp_type == 'mlp' or self.opt.mlp_type == 'mlp_fourier' or self.opt.mlp_type == 'siren':
+                    batchsize = multi.shape[0]
+                    multi = multi.permute(0,2,1)
+                    multi = multi.reshape((multi.shape[0], multi.shape[1], multi.shape[2]))
+
+                pred = self.surface_classifier(multi)
+
+                # SIREN Reshape
+                if self.opt.mlp_type == 'mlp' or self.opt.mlp_type == 'mlp_fourier' or self.opt.mlp_type == 'siren':
+                    pred = pred.reshape((batchsize, 1, -1))
+
+                preds.append(pred)
+
+        concat = torch.cat(preds, dim = 1)
+        return self.surface_classifier_final(concat)
 
     def calc_normal(self, points, calibs, imgSizes, transforms=None, labels=None, delta=0.0001, fd_type='forward'):
         '''
@@ -241,10 +299,11 @@ class HGPIFuNet(BasePIFuNet):
         if self.opt.use_normal_loss and points_nml is not None and labels_nml is not None:
             self.calc_normal(points_nml, calibs, imgSizes, labels=labels_nml)
 
-            gt_labels_rgb = (labels_nml[0].cpu().detach().numpy() + 1) / 0.5
-            pred_labels_rgb = (self.nmls[0].cpu().detach().numpy() + 1) / 0.5
-            save_samples_rgb('pointclouds/normals_gt.ply', points_nml[0].cpu().detach().numpy().T, gt_labels_rgb.T)
-            save_samples_rgb('pointclouds/normals_pred.ply', points_nml[0].cpu().detach().numpy().T, pred_labels_rgb.T)
+            if self.opt.debug:
+                gt_labels_rgb = (labels_nml[0].cpu().detach().numpy() + 1) / 0.5
+                pred_labels_rgb = (self.nmls[0].cpu().detach().numpy() + 1) / 0.5
+                save_samples_rgb('pointclouds/normals_gt.ply', points_nml[0].cpu().detach().numpy().T, gt_labels_rgb.T)
+                save_samples_rgb('pointclouds/normals_pred.ply', points_nml[0].cpu().detach().numpy().T, pred_labels_rgb.T)
 
         # get the prediction
         res = self.get_preds()
