@@ -130,9 +130,6 @@ class TrainDataset(Dataset):
         bb = datasetInterfaceUnity.getBoundingBox(sample_path)
         self.views = viewUtils.trimViewsByBB(views, bb)
 
-    def set_views(self, views):
-        self.views = views
-
     def get_render(self, subject, num_views):
         '''
         Return the render data

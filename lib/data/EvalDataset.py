@@ -17,6 +17,9 @@ class EvalDataset(TrainDataset):
         self.B_MIN = min
         self.B_MAX = max
 
+    def set_views(self, views):
+        self.views = views
+
     def get_item(self, index):
         subject = 'real_blueprint_test'
 

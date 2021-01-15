@@ -28,11 +28,7 @@ class Evaluator:
     def __init__(self, opt, projection_mode='orthogonal'):
         self.opt = opt
         self.load_size = self.opt.loadSize
-        self.to_tensor = transforms.Compose([
-            transforms.Resize(self.load_size),
-            transforms.ToTensor(),
-            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
-        ])
+
         # set cuda
         cuda = torch.device('cuda:%d' % opt.gpu_id) if torch.cuda.is_available() else torch.device('cpu')
 
@@ -110,11 +106,8 @@ if __name__ == '__main__':
 
     test_images = glob.glob(os.path.join(opt.test_folder_path, '*'))
     test_images = [f for f in test_images if ('png' in f or 'jpg' in f) and (not 'mask' in f)]
-    test_masks = [f[:-4]+'_mask.png' for f in test_images]
 
-    print("num; ", len(test_masks))
-
-    for image_path, mask_path in tqdm.tqdm(zip(test_images, test_masks)):
+    for image_path, mask_path in tqdm.tqdm(test_images):
         try:
             print(image_path, mask_path)
             data = evaluator.load_image(image_path, mask_path)
