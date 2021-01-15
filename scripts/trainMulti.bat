@@ -1,5 +1,5 @@
 conda activate pifu & ^
-python -m apps.train_shape --dataroot C:\Blueprint2Car\data ^
+python ./../apps/train_shape.py --dataroot C:\Blueprint2Car\data ^
  --gpu_ids 0 ^
  --skip_downsample ^
  --batch_size 2 ^

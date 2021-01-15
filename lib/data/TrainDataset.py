@@ -3,7 +3,6 @@ import sys
 import torch.nn.functional as F
 from .ParallelDataLoader import loadData, loadDataParallel
 
-sys.path.append(r'C:\Blueprint2Car')
 from src.datasetInterfaces import datasetInterfaceUnity, datasetInterfaceProcessed
 from src.utils import viewUtils
 import numpy as np

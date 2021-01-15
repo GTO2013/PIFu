@@ -8,6 +8,7 @@ class BaseOptions():
         # Datasets related
         g_data = parser.add_argument_group('Data')
         g_data.add_argument('--dataroot', type=str, default='./data', help='path to images (data folder)')
+        g_data.add_argument('--tensorboard_path', type=str, default='./../../trainedModels/logs_pifu', help='path to images (data folder)')
         g_data.add_argument('--loadSize', type=int, default=512, help='load size of input image')
         g_data.add_argument('--use_normal_input', action='store_true')
 
@@ -103,10 +104,10 @@ class BaseOptions():
         parser.add_argument('--num_gen_mesh_test', type=int, default=1, help='how many meshes to generate during testing')
 
         # path
-        parser.add_argument('--checkpoints_path', type=str, default='./checkpoints', help='path to save checkpoints')
+        parser.add_argument('--checkpoints_path', type=str, default='./../../trainedModels', help='path to save checkpoints')
         parser.add_argument('--load_netG_checkpoint_path', type=str, default=None, help='path to save checkpoints')
         parser.add_argument('--load_netC_checkpoint_path', type=str, default=None, help='path to save checkpoints')
-        parser.add_argument('--results_path', type=str, default='./results', help='path to save results ply')
+        parser.add_argument('--results_path', type=str, default='./../../generated3DModels', help='path to save results ply')
         parser.add_argument('--load_checkpoint_path', type=str, help='path to save results ply')
         parser.add_argument('--single', type=str, default='', help='single data for training')
         parser.add_argument('--max_train_size', type=int, default=-1, help='max number of training samples')
