@@ -32,7 +32,7 @@ class BaseOptions():
         #g_train.add_argument('--learning_rate', type=float, default=1e-3, help='adam learning rate')
         g_train.add_argument('--learning_rate', type=float, default=1e-4, help='adam learning rate') # -4 before
         g_train.add_argument('--learning_rateC', type=float, default=1e-3, help='adam learning rate')
-        g_train.add_argument('--num_epoch', type=int, default=100, help='num epoch to train')
+        g_train.add_argument('--num_epoch', type=int, default=40, help='num epoch to train')
 
         g_train.add_argument('--freq_plot', type=int, default=10, help='freqency of the error plot')
         g_train.add_argument('--freq_save', type=int, default=50, help='freqency of the save_checkpoints')
@@ -78,7 +78,7 @@ class BaseOptions():
 
         # Classification General
         g_model.add_argument('--mlp_type', type=str, default='mlp', help='type of classifier to use')
-        g_model.add_argument('--mlp_dim', nargs='+', default=[256+3+4, 1024, 512, 256, 128, 1], type=int, help='# of dimensions of mlp')
+        g_model.add_argument('--mlp_dim', nargs='+', default=[1024+3, 1024, 512, 256, 128, 1], type=int, help='# of dimensions of mlp')
         g_model.add_argument('--mlp_dim_color', nargs='+', default=[513, 1024, 512, 256, 128, 3],
                              type=int, help='# of dimensions of color mlp')
 

@@ -19,7 +19,8 @@ def gen_mesh(opt, net, cuda, data, save_path, use_octree=True):
         #uv = xyz_tensor[:, :2, :]
         #color = index(image_tensor[:1], uv).detach().cpu().numpy()[0].T
         #color = color * 0.5 + 0.5
-        save_obj_mesh(save_path, verts, faces)
+        if save_path is not None:
+            save_obj_mesh(save_path, verts, faces)
 
         return [verts, faces]
         #save_obj_mesh_with_color(save_path, verts, faces, color)

@@ -50,7 +50,7 @@ class TrainDataset(Dataset):
 
         self.yaw_list = list(range(0,181,90))
         self.pitch_list = [0, 90]
-        self.subjects = self.get_subjects()
+        self.subjects = self.get_subjects() if phase != "eval" else None
 
         # PIL to tensor
         self.to_tensor = transforms.Compose([
@@ -73,12 +73,13 @@ class TrainDataset(Dataset):
         self.normals_dic = None
         self.views = None
 
-        points, sdf, pointsNormals, normals = loadDataParallel(self.root, self.subjects, self.use_normals)
+        if phase != "eval":
+            points, sdf, pointsNormals, normals = loadDataParallel(self.root, self.subjects, self.use_normals)
 
-        self.points_dic = points
-        self.sdf_dic = sdf
-        self.points_normals_dic = pointsNormals
-        self.normals_dic = normals
+            self.points_dic = points
+            self.sdf_dic = sdf
+            self.points_normals_dic = pointsNormals
+            self.normals_dic = normals
 
     def get_subjects(self):
         all_subjects = []
@@ -163,7 +164,6 @@ class TrainDataset(Dataset):
 
         for idx, yaw in enumerate(yaw_list):
             pitch = 0
-            
             if num_views == 4 and idx == 2:
                 pitch = 90
 
@@ -252,7 +252,6 @@ class TrainDataset(Dataset):
             extrinsic = torch.Tensor(extrinsic).float()
 
             render = self.to_tensor(render)
-
             render_list.append(render)
             calib_list.append(calib)
             extrinsic_list.append(extrinsic)

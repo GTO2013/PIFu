@@ -5,10 +5,9 @@ class EvalDataset(TrainDataset):
     def modify_commandline_options(parser):
         return parser
 
-    def __init__(self, opt, images):
-        super(EvalDataset, self).__init__(opt, phase='test')
+    def __init__(self, opt):
+        super(EvalDataset, self).__init__(opt, phase='eval')
         self.opt = opt
-        self.images = images
 
     def __len__(self):
         return 1
@@ -26,7 +25,11 @@ class EvalDataset(TrainDataset):
         res = {
             'name': subject,
             'b_min': self.B_MIN,
-            'b_max': self.B_MAX
+            'b_max': self.B_MAX,
+            'samples': None,
+            'labels': None,
+            'samples_normals': None,
+            'normals': None
         }
 
         render_data = self.get_render(subject, num_views=self.num_views)

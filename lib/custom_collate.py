@@ -78,8 +78,11 @@ class MultiViewCollator(object):
         for batch in batches:
             train_data['bounding_boxes'].append({'b_min':batch['b_min'],'b_max':batch['b_max']})
             train_data['calib'].append(batch['calib'].unsqueeze(0))
-            train_data['samples'].append(batch['samples'].unsqueeze(0))
-            train_data['labels'].append(batch['labels'].unsqueeze(0))
+
+            if batch['samples'] is not None:
+                train_data['samples'].append(batch['samples'].unsqueeze(0))
+            if batch['labels'] is not None:
+                train_data['labels'].append(batch['labels'].unsqueeze(0))
 
             if batch['samples_normals'] != None:
                 train_data['samples_normals'].append(batch['samples_normals'].unsqueeze(0))
@@ -92,9 +95,13 @@ class MultiViewCollator(object):
                 train_data['normals'] = None
 
         train_data['calib'] = torch.cat(train_data['calib'], dim=0)
-        train_data['samples'] = torch.cat(train_data['samples'], dim=0)
-        train_data['labels'] = torch.cat(train_data['labels'], dim=0)
         train_data['size'] = torch.stack(sizes, dim=0).repeat(len(train_data['calib']), 1)
+
+        if train_data['samples'] != []:
+            train_data['samples'] = torch.cat(train_data['samples'], dim=0)
+
+        if train_data['labels'] != []:
+            train_data['labels'] = torch.cat(train_data['labels'], dim=0)
 
         if train_data['samples_normals'] != None:
             train_data['samples_normals'] = torch.cat(train_data['samples_normals'], dim=0)
@@ -107,7 +114,7 @@ class MultiViewCollator(object):
 
         train_data['calib'] = reshape_multiview_calib_tensor(train_data['calib'])
 
-        if opt.num_views > 1:
+        if opt.num_views > 1 and train_data['samples'] != []:
             train_data['samples'] = reshape_sample_tensor(train_data['samples'], opt.num_views)
 
         return train_data
@@ -119,7 +126,7 @@ def move_to_gpu(train_data, cuda):
                 train_data[key][idx] = img.to(device=cuda)
         elif key == 'bounding_boxes':
             pass
-        else:
+        elif train_data[key] is not None and len(train_data[key]) > 0:
             train_data[key] = train_data[key].to(device=cuda)
 
     return train_data

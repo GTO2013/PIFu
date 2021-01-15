@@ -40,9 +40,9 @@ class HGPIFuNet(BasePIFuNet):
         self.criteria = criteria
 
         self.image_filter1 = HGFilter(opt)
-        self.image_filter2 = HGFilter(opt)
-        self.image_filter3 = HGFilter(opt)
-        self.image_filter4 = HGFilter(opt)
+        #self.image_filter2 = HGFilter(opt)
+        #self.image_filter3 = HGFilter(opt)
+        #self.image_filter4 = HGFilter(opt)
 
         #self.image_filter = UNet(in_channels=3, depth=5, wf=6, padding=True, batch_norm=True, up_mode='upsample')
 
@@ -86,17 +86,16 @@ class HGPIFuNet(BasePIFuNet):
         for idx, img in enumerate(images):
             #img = self.gauss(img)
 
-            if idx == 0:
-                feat, _, _ = self.image_filter1(img)
-            elif idx == 1:
-                feat, _, _ = self.image_filter2(img)
-            elif idx == 2:
-                feat, _, _ = self.image_filter3(img)
-            elif idx == 3:
-                feat, _, _ = self.image_filter4(img)
+            #if idx == 0:
+            #    feat, _, _ = self.image_filter1(img)
+            #elif idx == 1:
+            #    feat, _, _ = self.image_filter2(img)
+            #elif idx == 2:
+            #    feat, _, _ = self.image_filter3(img)
+            #elif idx == 3:
+            #    feat, _, _ = self.image_filter4(img)
 
-
-            #feat, _, _ = self.image_filter1(img)
+            feat, _, _ = self.image_filter1(img)
 
             # If it is not in training, only produce the last im_feat
             #if not self.training:
@@ -126,7 +125,7 @@ class HGPIFuNet(BasePIFuNet):
 
                 sizes = imgSizes[idx::self.num_views].unsqueeze(2)
                 currentXY = currentXY * sizes
-                skip = torch.cat([self.images[idx], im_feat], dim=1)
+                #skip = torch.cat([self.images[idx], im_feat], dim=1)
 
                 #pixel_local = self.index(self.images[idx], currentXY).cpu().detach().numpy()
                 #img_local = np.swapaxes(self.images[idx][0].cpu().detach().numpy(),0,2)
@@ -138,7 +137,7 @@ class HGPIFuNet(BasePIFuNet):
                 #plt.imshow(new_img, cmap='gray')
                 #plt.show()
 
-                point_local_feat = self.index(skip, currentXY)
+                point_local_feat = self.index(im_feat, currentXY)
                 point_local_feat_list.append(point_local_feat)
 
 
@@ -282,8 +281,8 @@ class HGPIFuNet(BasePIFuNet):
         error['Err(occ)'] /= len(self.intermediate_preds_list)
 
         if self.opt.use_normal_loss and self.nmls is not None and self.labels_nml is not None:
-            error['Err(nml)'] = (1 - self.criteria['nml'](self.nmls, self.labels_nml).unsqueeze(0))*0.2
-            error['Err(cmb)'] = error['Err(occ)'] + error['Err(nml)']
+            error['Err(nml)'] = (1 - self.criteria['nml'](self.nmls, self.labels_nml).unsqueeze(0))
+            error['Err(cmb)'] = error['Err(occ)'] + error['Err(nml)']*0.5
         else:
             error['Err(cmb)'] = error['Err(occ)']
 
