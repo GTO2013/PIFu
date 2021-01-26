@@ -1,6 +1,7 @@
 from .mesh_util import *
 from .sample_util import *
 from .geometry import *
+import numpy as np
 from PIL import Image
 
 class MultiViewCollator(object):
@@ -12,7 +13,9 @@ class MultiViewCollator(object):
     def make_divisible(self, x, div):
         return int(((x // div) + 1) * div)
 
-    def adjustImageSizesInBatch(self, batches, div = 4):
+    def adjustImageSizesInBatch(self, batches):
+        div = 16
+
         numBatches = len(batches)
         numImages = len(batches[0]['img'])
 
@@ -95,7 +98,7 @@ class MultiViewCollator(object):
                 train_data['normals'] = None
 
         train_data['calib'] = torch.cat(train_data['calib'], dim=0)
-        train_data['size'] = torch.stack(sizes, dim=0).repeat(len(train_data['calib']), 1)
+        train_data['size'] = torch.stack(sizes, dim=0)#.repeat(len(train_data['calib']), 1)
 
         if train_data['samples'] != []:
             train_data['samples'] = torch.cat(train_data['samples'], dim=0)
@@ -106,16 +109,16 @@ class MultiViewCollator(object):
         if train_data['samples_normals'] != None:
             train_data['samples_normals'] = torch.cat(train_data['samples_normals'], dim=0)
 
-            if opt.num_views > 1:
-               train_data['samples_normals'] = reshape_sample_tensor(train_data['samples_normals'], opt.num_views)
+            #if opt.num_views > 1:
+               #train_data['samples_normals'] = reshape_sample_tensor(train_data['samples_normals'], opt.num_views)
 
         if train_data['normals'] != None:
             train_data['normals'] = torch.cat(train_data['normals'], dim=0)
 
         train_data['calib'] = reshape_multiview_calib_tensor(train_data['calib'])
 
-        if opt.num_views > 1 and train_data['samples'] != []:
-            train_data['samples'] = reshape_sample_tensor(train_data['samples'], opt.num_views)
+        #if opt.num_views > 1 and train_data['samples'] != []:
+            #train_data['samples'] = reshape_sample_tensor(train_data['samples'], opt.num_views)
 
         return train_data
 

@@ -30,6 +30,7 @@ class TrainDataset(Dataset):
         self.opt = opt
         self.projection_mode = 'orthogonal'
         self.is_train = (phase == 'train')
+        self.is_eval = (phase == 'eval')
 
         sub_dir = "training" if self.is_train else "test"
 
@@ -50,7 +51,7 @@ class TrainDataset(Dataset):
 
         self.yaw_list = list(range(0,181,90))
         self.pitch_list = [0, 90]
-        self.subjects = self.get_subjects() if phase != "eval" else None
+        self.subjects = self.get_subjects() if not self.is_eval else None
 
         # PIL to tensor
         self.to_tensor = transforms.Compose([
@@ -73,7 +74,7 @@ class TrainDataset(Dataset):
         self.normals_dic = None
         self.views = None
 
-        if phase != "eval":
+        if not self.is_eval:
             points, sdf, pointsNormals, normals = loadDataParallel(self.root, self.subjects, self.use_normals)
 
             self.points_dic = points
@@ -102,6 +103,10 @@ class TrainDataset(Dataset):
             else:
                 print("%s has no sdf file!" % subject)
 
+        #Make sure subject count is divisible by batchsize for multi gpu
+        if len(all_subjects) % self.opt.batch_size != 0:
+            all_subjects = all_subjects[len(all_subjects) % self.opt.batch_size:]
+
         return all_subjects
 
     def __len__(self):
@@ -126,9 +131,42 @@ class TrainDataset(Dataset):
         else:
             views = datasetInterfaceProcessed.getViewsBlueprint(sample_path)
 
-        views = viewUtils.resizeSquareViews(views, self.load_size)
+            if not self.is_eval and random.uniform(0,1) < 0.4:
+                if random.uniform(0, 1) < 0.5:
+                    views = viewUtils.dilateViews(views, kernelSize=2, iterations=1)
+                else:
+                    views = viewUtils.thinViews(views)
+
+        #Scale smaller
+        if not self.is_eval and not self.use_normals_input and self.opt.random_scale and random.uniform(0,1) < 0.5:
+            rand_scale = random.uniform(0.5, 0.8)
+            views = viewUtils.resizeSquareViews(views, int(viewUtils.getMaxDimension(views) * rand_scale), cv2.INTER_AREA)
+
+        #Resize to base resolution
+        views = viewUtils.resizeSquareViews(views, self.load_size, cv2.INTER_AREA)
         bb = datasetInterfaceUnity.getBoundingBox(sample_path)
-        self.views = viewUtils.trimViewsByBB(views, bb)
+        views = viewUtils.trimViewsByBB(views, bb)
+
+        if not self.is_eval and not self.use_normals_input:
+            newViews = dict()
+
+            # Add random ground line
+            for key in views:
+                img = views[key]
+                if key != "top":
+                    if random.uniform(0,1) < 0.4:
+                        img[-1:img.shape[0],:] = random.randint(0,40)
+
+                newViews[key] = img
+
+            views = newViews
+            if random.uniform(0,1) < 0.7:
+                views = viewUtils.addNoiseToViews(views, blackNoise=random.randint(5,20), blackNoiseVar=5)
+            if random.uniform(0, 1) < 0.7:
+                views = viewUtils.addJpegNoiseToViews(views, random.randint(40,100))
+
+        self.views = views
+        #viewUtils.showViews(self.views)
 
     def get_render(self, subject, num_views):
         '''
@@ -155,12 +193,8 @@ class TrainDataset(Dataset):
 
         # random flip
         flip = False
-        if self.opt.random_flip and np.random.rand() > 0.5:
+        if self.is_train and self.opt.random_flip and np.random.rand() > 0.5:
             flip = True
-
-        rand_scale = 1.0
-        if self.opt.random_scale:
-            rand_scale = random.uniform(0.8, 1)
 
         for idx, yaw in enumerate(yaw_list):
             pitch = 0
@@ -199,10 +233,10 @@ class TrainDataset(Dataset):
 
             #render = render.resize((self.load_size, self.load_size), Image.BILINEAR)
 
-            if (yaw == 90 and pitch == 0) or (yaw == 90 and pitch == 90):
+            if True:#(yaw == 90 and pitch == 0) or (yaw == 90 and pitch == 90):
                 render = ImageOps.mirror(render)
 
-                if self.is_train and flip:
+                if flip:
                     scale_intrinsic[0, 0] *= -1
                     render = transforms.RandomHorizontalFlip(p=1.0)(render)
 
@@ -213,14 +247,6 @@ class TrainDataset(Dataset):
 
                 w, h = render.size
                 th, tw = self.load_size, self.load_size
-
-                # random scale
-                if rand_scale != 1.0:
-                    w = int(rand_scale * w)
-                    h = int(rand_scale * h)
-                    render = render.resize((w, h), Image.BILINEAR)
-                    scale_intrinsic *= rand_scale
-                    scale_intrinsic[3, 3] = 1
 
                 # random translate in the pixel space
                 if self.opt.random_trans:

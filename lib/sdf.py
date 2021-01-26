@@ -30,7 +30,6 @@ def create_grid(resX, resY, resZ, b_min=np.array([0, 0, 0]), b_max=np.array([1, 
 def batch_eval(points, eval_func, num_samples=512 * 512 * 512):
     num_pts = points.shape[1]
     sdf = np.zeros(num_pts)
-
     num_batches = num_pts // num_samples
     for i in range(num_batches):
         sdf[i * num_samples:i * num_samples + num_samples] = eval_func(

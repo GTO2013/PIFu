@@ -28,16 +28,15 @@ def compute_acc(pred, gt, thresh=0.5):
             vol_gt = 1
         return true_pos / union, true_pos / vol_pred, true_pos / vol_gt
 
-def calc_error(net, cuda, dataset, num_tests):
+def calc_error(coll,net, cuda, dataset, num_tests):
     if num_tests > len(dataset):
         num_tests = len(dataset)
     with torch.no_grad():
         erorr_arr, IOU_arr, prec_arr, recall_arr = [], [], [], []
-        data_iter = iter(dataset)
+
         for idx in tqdm(range(num_tests)):
             #ToDO: Normal Loss!
-            #image_tensor_list, calib_tensor, sample_tensor, label_tensor, img_sizes, points_nml, labels_nml = move_to_gpu(next(data_iter), cuda)
-            train_data  =  move_to_gpu(next(data_iter), cuda)
+            train_data = move_to_gpu(coll([dataset[idx]]),cuda)
 
             res, nmls, error = net.forward(train_data['images'], train_data['samples'], train_data['calib'], imgSizes=train_data['size'],
                                       labels=train_data['labels'], points_nml=train_data['samples_normals'], labels_nml=train_data['normals'])

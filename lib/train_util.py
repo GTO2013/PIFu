@@ -7,10 +7,8 @@ from lib.custom_collate import move_to_gpu
 def gen_mesh(opt, net, cuda, data, save_path, use_octree=True):
     bb_min = data['bounding_boxes'][0]['b_min']
     bb_max = data['bounding_boxes'][0]['b_max']
-    print("\nMin BB: {0}, Max BB: {1}".format(bb_min, bb_max))
 
     net.filter(data['images'])
-
     try:
         verts, faces, _, _ = reconstruction(net, cuda, data['calib'], data['size'],
                                             opt.resolution, bb_min, bb_max, use_octree=use_octree)

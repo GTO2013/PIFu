@@ -32,7 +32,8 @@ class Evaluator:
         self.load_size = self.opt.loadSize
 
         # set cuda
-        cuda = torch.device('cuda:%d' % opt.gpu_id) if torch.cuda.is_available() else torch.device('cpu')
+        device_ids = [int(i) for i in opt.gpu_ids.split(",")]
+        cuda = torch.device('cuda:%d' % device_ids[0])
 
         # create net
         netG = HGPIFuNet(opt, projection_mode).to(device=cuda)

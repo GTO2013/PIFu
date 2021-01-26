@@ -10,7 +10,7 @@ def initWriter(opt):
 
     #Dont create a new dir when we are only testing
     if opt.max_train_size == -1 and not opt.debug:
-        path = os.path.join(opt.tensorboard_path,'/{0}/{1}'.format(opt.name, datetime.datetime.now().strftime("%Y%m%d-%H%M%S")))
+        path = opt.tensorboard_path + '{0}/{1}'.format(opt.name, datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
         writer = SummaryWriter(log_dir=path)
 
 def updateAfterEpoch(epoch, train_errors, test_errors, images_train, images_test):

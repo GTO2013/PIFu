@@ -50,10 +50,10 @@ def train(opt):
 
     print('train data size: ', len(train_data_loader))
     # NOTE: batch size should be 1 and use all the points for evaluation
-    test_data_loader = DataLoader(test_dataset,
-                                  batch_size=1, shuffle=True, collate_fn=coll,
-                                  num_workers=opt.num_threads, pin_memory=opt.pin_memory)
-    print('test data size: ', len(test_data_loader))
+    #test_data_loader = DataLoader(test_dataset,
+    #                              batch_size=1, shuffle=True, collate_fn=coll,
+    #                              num_workers=opt.num_threads, pin_memory=opt.pin_memory)
+    print('test data size: ', len(test_dataset))
 
     # create net
     print("Num GPUs: " + str(torch.cuda.device_count()))
@@ -95,9 +95,7 @@ def train(opt):
     os.makedirs('%s/%s/training' % (opt.results_path, opt.name), exist_ok=True)
     os.makedirs('%s/%s/test' % (opt.results_path, opt.name), exist_ok=True)
 
-    opt_log = os.path.join(opt.results_path, opt.name, 'opt.txt')
-    with open(opt_log, 'w') as outfile:
-        outfile.write(json.dumps(vars(opt), indent=2))
+    BaseOptions().saveOptToFile(opt)
 
     # training
     start_epoch = 0 if not opt.continue_train else max(opt.resume_epoch,0)
@@ -113,9 +111,10 @@ def train(opt):
 
             train_data = move_to_gpu(train_data,cuda)
             res, nmls, error = netG.forward(train_data['images'], train_data['samples'], train_data['calib'], imgSizes=train_data['size'],
-                                      labels=train_data['labels'], points_nml=train_data['samples_normals'], labels_nml=train_data['normals'])
+                                  labels=train_data['labels'], points_nml=train_data['samples_normals'], labels_nml=train_data['normals'])
 
             error['Err(cmb)'].mean().backward()
+
             optimizerG.step()
 
             iter_net_time = time.time()
@@ -130,7 +129,7 @@ def train(opt):
                     'Name: {0} | Epoch: {1} | {2}/{3} | Err (Cmb): {4:.06f} | Err(Occ): {5:.06f} |  Err(Nml): {6:.06f} | LR: {7:.06f} | dataT: {8:.05f} | netT: {9:.05f} | ETA: {10:02d}:{11:02d}'.format(
                         opt.name, epoch, train_idx, len(train_data_loader), error['Err(cmb)'].mean().item(), error['Err(occ)'].mean().item(), normal_loss, lr, iter_start_time - iter_data_time, iter_net_time - iter_start_time, int(eta // 60),int(eta - 60 * (eta // 60))))
 
-            if train_idx % opt.freq_save == 0 and train_idx != 0:
+            if not opt.debug and train_idx % opt.freq_save == 0 and train_idx != 0:
                 torch.save(netG.state_dict(), '%s/%s/netG_latest' % (opt.checkpoints_path, opt.name))
                 torch.save(netG.state_dict(), '%s/%s/netG_epoch_%d' % (opt.checkpoints_path, opt.name, epoch))
 
@@ -156,7 +155,7 @@ def train(opt):
             if not opt.no_num_eval:
                 test_losses = {}
                 print('calc error (test) ...')
-                test_errors = calc_error(netG, cuda, test_data_loader, 100)
+                test_errors = calc_error(coll, netG, cuda, test_dataset, 100)
                 print('eval test MSE: {0:06f} IOU: {1:06f} prec: {2:06f} recall: {3:06f}'.format(*test_errors))
                 MSE, IOU, prec, recall = test_errors
                 test_losses['MSE(test)'] = MSE
@@ -166,7 +165,7 @@ def train(opt):
 
                 print('calc error (train) ...')
                 train_dataset.is_train = False
-                train_errors = calc_error(netG, cuda, train_data_loader, 100)
+                train_errors = calc_error(coll,netG, cuda, train_dataset, 100)
                 train_dataset.is_train = True
                 print('eval train MSE: {0:06f} IOU: {1:06f} prec: {2:06f} recall: {3:06f}'.format(*train_errors))
                 MSE, IOU, prec, recall = train_errors
@@ -206,3 +205,4 @@ def train(opt):
 
 if __name__ == '__main__':
     train(opt)
+

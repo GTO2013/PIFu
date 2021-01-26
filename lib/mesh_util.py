@@ -28,11 +28,12 @@ def reconstruction(net, cuda, calib_tensor, img_sizes,
     # Then we define the lambda function for cell evaluation
     def eval_func(points):
         points = np.expand_dims(points, axis=0)
-        points = np.repeat(points, net.num_views, axis=0)
+        #points = np.repeat(points, net.num_views, axis=0)
         samples = torch.from_numpy(points).to(device=cuda).float()
         net.query(samples, calib_tensor, img_sizes)
         pred = net.get_preds()[0][0]
         return pred.detach().cpu().numpy()
+
 
     # Then we evaluate the grid
     if use_octree:
@@ -40,6 +41,7 @@ def reconstruction(net, cuda, calib_tensor, img_sizes,
     else:
         sdf = eval_grid(coords, eval_func, num_samples=num_samples)
 
+    print("Marching cubes...")
     # Finally we do marching cubes
     try:
         verts, faces, normals, values = measure.marching_cubes_lewiner(sdf, 0.5)

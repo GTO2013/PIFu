@@ -66,14 +66,14 @@ class HGFilter(nn.Module):
 
         # Base part
         #self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=1 if self.opt.skip_downsample else 2, padding=3)
-        self.conv1 = nn.Conv2d(3 if self.opt.use_normal_input else 1, 64, kernel_size=7, stride=1, padding=3)
+        self.conv1 = nn.Conv2d(3 if self.opt.use_normal_input else 1, 64, kernel_size=7, stride=1 if self.opt.skip_downsample else 2, padding=3)
 
         if self.opt.norm == 'batch':
             self.bn1 = nn.BatchNorm2d(64) # 64 before
         elif self.opt.norm == 'group':
             self.bn1 = nn.GroupNorm(32, 64)
 
-        if not self.opt.skip_downsample:
+        if False and not self.opt.skip_downsample:
             if self.opt.hg_down == 'conv64':
                 self.conv2 = ConvBlock(64, 64, self.opt.norm)
                 self.down_conv2 = nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1)
@@ -84,11 +84,12 @@ class HGFilter(nn.Module):
                 self.conv2 = ConvBlock(64, 128, self.opt.norm)
             else:
                 raise NameError('Unknown Fan Filter setting!')
-        dim = 64 #64 before
-        groupNormSize = 16 #32 Before
 
-        self.conv3 = ConvBlock(dim, 64, self.opt.norm, groupNormSize)
-        self.conv4 = ConvBlock(64, self.opt.hourglass_dim_internal, self.opt.norm, groupNormSize)
+        dim = 64 #64 before
+        groupNormSize = 32 #32 Before
+
+        self.conv3 = ConvBlock(dim, 128, self.opt.norm, groupNormSize)
+        self.conv4 = ConvBlock(128, self.opt.hourglass_dim_internal, self.opt.norm, groupNormSize)
 
         # Stacking part
         for hg_module in range(self.num_modules):
@@ -113,7 +114,7 @@ class HGFilter(nn.Module):
         x = F.relu(self.bn1(self.conv1(x)), True)
         tmpx = x
 
-        if not self.opt.skip_downsample:
+        if False and not self.opt.skip_downsample:
             if self.opt.hg_down == 'ave_pool':
                 x = F.avg_pool2d(self.conv2(x), 2, stride=2)
             elif self.opt.hg_down in ['conv64', 'conv128']:

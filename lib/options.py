@@ -1,4 +1,5 @@
 import argparse
+import json, os
 
 class BaseOptions():
     def __init__(self):
@@ -8,7 +9,7 @@ class BaseOptions():
         # Datasets related
         g_data = parser.add_argument_group('Data')
         g_data.add_argument('--dataroot', type=str, default='./data', help='path to images (data folder)')
-        g_data.add_argument('--tensorboard_path', type=str, default='./../../trainedModels/logs_pifu', help='path to images (data folder)')
+        g_data.add_argument('--tensorboard_path', type=str, default='./trainedModels/logs_pifu/', help='path to images (data folder)')
         g_data.add_argument('--loadSize', type=int, default=512, help='load size of input image')
         g_data.add_argument('--use_normal_input', action='store_true')
 
@@ -16,13 +17,11 @@ class BaseOptions():
         g_exp = parser.add_argument_group('Experiment')
         g_exp.add_argument('--name', type=str, default='multiview_pifu', help='name of the experiment')
         g_exp.add_argument('--debug', action='store_true', help='debug mode or not')
-
         g_exp.add_argument('--num_views', type=int, default=1, help='How many views to use for multiview network.')
 
         # Training related
         g_train = parser.add_argument_group('Training')
         g_train.add_argument('--gpu_ids', type=str, default='0', help='gpu ids: e.g. 0  0,1,2, 0,2, -1 for CPU mode')
-
         g_train.add_argument('--num_threads', default=1, type=int, help='#threads for loading data')
         g_train.add_argument('--serial_batches', action='store_true', help='if true, takes images in order to make batches, otherwise takes them randomly')
         g_train.add_argument('--same_test_data', action='store_true', help='if true, always use the same test data')
@@ -77,8 +76,8 @@ class BaseOptions():
         g_model.add_argument('--skip_downsample', action='store_true')
 
         # Classification General
-        g_model.add_argument('--mlp_type', type=str, default='mlp', help='type of classifier to use')
-        g_model.add_argument('--mlp_dim', nargs='+', default=[1024+3, 1024, 512, 256, 128, 1], type=int, help='# of dimensions of mlp')
+        g_model.add_argument('--mlp_type', type=str, default='conv1d', help='type of classifier to use')
+        g_model.add_argument('--mlp_dim', nargs='+', default=[0, 1024, 512, 256, 128, 1], type=int, help='# of dimensions of mlp')
         g_model.add_argument('--mlp_dim_color', nargs='+', default=[513, 1024, 512, 256, 128, 3],
                              type=int, help='# of dimensions of color mlp')
 
@@ -104,10 +103,10 @@ class BaseOptions():
         parser.add_argument('--num_gen_mesh_test', type=int, default=1, help='how many meshes to generate during testing')
 
         # path
-        parser.add_argument('--checkpoints_path', type=str, default='./../../trainedModels', help='path to save checkpoints')
+        parser.add_argument('--checkpoints_path', type=str, default='./trainedModels', help='path to save checkpoints')
         parser.add_argument('--load_netG_checkpoint_path', type=str, default=None, help='path to save checkpoints')
         parser.add_argument('--load_netC_checkpoint_path', type=str, default=None, help='path to save checkpoints')
-        parser.add_argument('--results_path', type=str, default='./../../generated3DModels', help='path to save results ply')
+        parser.add_argument('--results_path', type=str, default='./generated3DModels', help='path to save results ply')
         parser.add_argument('--load_checkpoint_path', type=str, help='path to save results ply')
         parser.add_argument('--single', type=str, default='', help='single data for training')
         parser.add_argument('--max_train_size', type=int, default=-1, help='max number of training samples')
@@ -164,8 +163,32 @@ class BaseOptions():
 
         return '_'.join(str(x) for x in [baseName,input_type, filter_hg, sample_count, nml_loss, skip_ds, mlp_type, mlp_sizes])
 
+    def saveOptToFile(self, opt):
+        savePath = '%s/%s/options.txt' % (opt.checkpoints_path, opt.name)
+        with open(savePath, "w") as f:
+            json.dump(opt.__dict__, f, indent=2)
+
+        print("Saved options to {0}".format(savePath))
+
+    def loadOptFromFile(self, name, checkPointsPath = "../../trainedModels"):
+        loadPath = '%s/%s/options.txt' % (checkPointsPath, name)
+        if os.path.exists(loadPath):
+            parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+            parser = self.initialize(parser)
+            opt = parser.parse_args()
+
+            with open(loadPath, 'r') as f:
+                opt.__dict__ = json.load(f)
+
+            return opt
+        else:
+            return None
+
     def parse(self):
         opt = self.gather_options()
+
+        #Set first mlp dim according to filter sizes
+        opt.mlp_dim[0] = 1808 #opt.hourglass_dim * opt.num_views + 4
 
         #if opt.max_train_size != -1:
             #opt.no_gen_mesh = True
