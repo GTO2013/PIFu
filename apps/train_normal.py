@@ -108,18 +108,17 @@ def train(opt):
 
         for train_idx, train_data in enumerate(train_data_loader):
             iter_start_time = time.time()
+            optimizerG.zero_grad()
+
 
             train_data = move_to_gpu(train_data, cuda)
             res, nmls, error = netG.forward(train_data['images'], train_data['samples'], train_data['calib'], imgSizes=train_data['size'],
                                             labels=train_data['labels'], points_nml=train_data['samples_normals'], labels_nml=train_data['normals'])
 
-            scaler.scale(error['Err(cmb)'].mean()).backward()
-            scaler.step(optimizerG)
-            scaler.update()
-
-            optimizerG.zero_grad()
-            netG.zero_grad()
-
+            error['Err(nml)'].mean().backward()
+            #scaler.scale(error['Err(nml)'].mean()).backward()
+            #scaler.step(optimizerG)
+            #scaler.update()
             #optimizerG.step()
 
             iter_net_time = time.time()
@@ -138,11 +137,11 @@ def train(opt):
                 torch.save(netG.state_dict(), '%s/%s/netG_latest' % (opt.checkpoints_path, opt.name))
                 torch.save(netG.state_dict(), '%s/%s/netG_epoch_%d' % (opt.checkpoints_path, opt.name, epoch))
 
-            if train_idx % opt.freq_save_ply == 0:
-                save_path = '%s/%s/pred.ply' % (opt.results_path, opt.name)
-                r = res[0].cpu()
-                points = train_data['samples'][0].transpose(0, 1).cpu()
-                save_samples_truncted_prob(save_path, points.detach().numpy(), r.detach().numpy())
+            #if train_idx % opt.freq_save_ply == 0:
+            #    save_path = '%s/%s/pred.ply' % (opt.results_path, opt.name)
+            #    r = res[0].cpu()
+            #    points = train_data['samples'][0].transpose(0, 1).cpu()
+            #    save_samples_truncted_prob(save_path, points.detach().numpy(), r.detach().numpy())
 
             iter_data_time = time.time()
 
@@ -157,7 +156,7 @@ def train(opt):
         with torch.no_grad():
             set_eval()
 
-            if not opt.no_num_eval:
+            if False and not opt.no_num_eval:
                 test_losses = {}
                 print('calc error (test) ...')
                 test_errors = calc_error(coll, netG, cuda, test_dataset, 100)
@@ -179,13 +178,13 @@ def train(opt):
                 test_losses['prec(train)'] = prec
                 test_losses['recall(train)'] = recall
 
-            if not opt.no_gen_mesh:
+            if False and not opt.no_gen_mesh:
                 print('generate mesh (test) ...')
                 test_data = None
                 train_data = None
                 for gen_idx in tqdm(range(opt.num_gen_mesh_test)):
-                    test_data = test_dataset[random.randint(0, len(test_dataset) - 1)]
-                    #test_data = test_dataset[6]
+                    #test_data = test_dataset[random.randint(0, len(test_dataset) - 1)]
+                    test_data = test_dataset[6]
                     test_data_batched = coll([test_data])
                     test_data_batched = move_to_gpu(test_data_batched, cuda)
 

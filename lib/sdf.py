@@ -27,27 +27,26 @@ def create_grid(resX, resY, resZ, b_min=np.array([0, 0, 0]), b_max=np.array([1, 
     return coords, coords_matrix
 
 
-def batch_eval(points, eval_func, num_samples=512 * 512 * 512):
+def batch_eval(features, points, eval_func, num_samples=512 * 512 * 512):
     num_pts = points.shape[1]
     sdf = np.zeros(num_pts)
     num_batches = num_pts // num_samples
     for i in range(num_batches):
-        sdf[i * num_samples:i * num_samples + num_samples] = eval_func(
-            points[:, i * num_samples:i * num_samples + num_samples])
+        sdf[i * num_samples:i * num_samples + num_samples] = eval_func(features, points[:, i * num_samples:i * num_samples + num_samples])
     if num_pts % num_samples:
-        sdf[num_batches * num_samples:] = eval_func(points[:, num_batches * num_samples:])
+        sdf[num_batches * num_samples:] = eval_func(features, points[:, num_batches * num_samples:])
 
     return sdf
 
 
-def eval_grid(coords, eval_func, num_samples=512 * 512 * 512):
+def eval_grid(features, coords, eval_func, num_samples=512 * 512 * 512):
     resolution = coords.shape[1:4]
     coords = coords.reshape([3, -1])
-    sdf = batch_eval(coords, eval_func, num_samples=num_samples)
+    sdf = batch_eval(features, coords, eval_func, num_samples=num_samples)
     return sdf.reshape(resolution)
 
 
-def eval_grid_octree(coords, eval_func,
+def eval_grid_octree(features, coords, eval_func,
                      init_resolution=64, threshold=0.01,
                      num_samples=512 * 512 * 512):
     resolution = coords.shape[1:4]
@@ -67,7 +66,7 @@ def eval_grid_octree(coords, eval_func,
         #print('step size:', reso, 'test sample size:', test_mask.sum())
         points = coords[:, test_mask]
 
-        sdf[test_mask] = batch_eval(points, eval_func, num_samples=num_samples)
+        sdf[test_mask] = batch_eval(features, points, eval_func, num_samples=num_samples)
         dirty[test_mask] = False
 
         # do interpolation

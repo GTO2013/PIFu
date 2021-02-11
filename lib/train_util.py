@@ -8,9 +8,8 @@ def gen_mesh(opt, net, cuda, data, save_path, use_octree=True):
     bb_min = data['bounding_boxes'][0]['b_min']
     bb_max = data['bounding_boxes'][0]['b_max']
 
-    net.filter(data['images'])
     try:
-        verts, faces, _, _ = reconstruction(net, cuda, data['calib'], data['size'],
+        verts, faces, _, _ = reconstruction(net, data['images'], cuda, data['calib'], data['size'],
                                             opt.resolution, bb_min, bb_max, use_octree=use_octree)
         #verts_tensor = torch.from_numpy(verts.T).unsqueeze(0).to(device=cuda).float()
         #xyz_tensor = net.projection(verts_tensor, calib_tensor[:1])
@@ -23,7 +22,8 @@ def gen_mesh(opt, net, cuda, data, save_path, use_octree=True):
         return [verts, faces]
         #save_obj_mesh_with_color(save_path, verts, faces, color)
     except Exception as e:
-        print(e)
+        import traceback
+        traceback.print_exc()
         print('Can not create marching cubes at this time.')
 
     return [None, None]

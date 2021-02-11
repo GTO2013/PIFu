@@ -18,6 +18,8 @@ class BaseOptions():
         g_exp.add_argument('--name', type=str, default='multiview_pifu', help='name of the experiment')
         g_exp.add_argument('--debug', action='store_true', help='debug mode or not')
         g_exp.add_argument('--num_views', type=int, default=1, help='How many views to use for multiview network.')
+        g_exp.add_argument('--render_normals', action='store_true')
+        g_exp.add_argument('--super_res', action='store_true')
 
         # Training related
         g_train = parser.add_argument_group('Training')
@@ -32,6 +34,7 @@ class BaseOptions():
         g_train.add_argument('--learning_rate', type=float, default=1e-4, help='adam learning rate') # -4 before
         g_train.add_argument('--learning_rateC', type=float, default=1e-3, help='adam learning rate')
         g_train.add_argument('--num_epoch', type=int, default=40, help='num epoch to train')
+        g_train.add_argument('--predict_normal', action='store_true')
 
         g_train.add_argument('--freq_plot', type=int, default=10, help='freqency of the error plot')
         g_train.add_argument('--freq_save', type=int, default=50, help='freqency of the save_checkpoints')
@@ -66,6 +69,9 @@ class BaseOptions():
                              help='instance normalization or batch normalization or group normalization')
 
         # hg filter specify
+        g_model.add_argument('--use_unet', action='store_true', help='Use a unet instead')
+        g_model.add_argument('--use_gan_input', action='store_true', help='Use the input of the GAN')
+        g_model.add_argument('--gan_epoch', type=int, default=135, help='GAN Epoch to be used')
         g_model.add_argument('--num_stack', type=int, default=2, help='# of hourglass')
         #g_model.add_argument('--num_stack', type=int, default=4, help='# of hourglass')
         g_model.add_argument('--num_hourglass', type=int, default=2, help='# of stacked layer of hourglass') #3 before
@@ -77,7 +83,8 @@ class BaseOptions():
 
         # Classification General
         g_model.add_argument('--mlp_type', type=str, default='conv1d', help='type of classifier to use')
-        g_model.add_argument('--mlp_dim', nargs='+', default=[0, 1024, 512, 256, 128, 1], type=int, help='# of dimensions of mlp')
+        g_model.add_argument('--mlp_dim', nargs='+', default=[0, 512, 512, 256, 128, 1], type=int, help='# of dimensions of mlp')
+        #g_model.add_argument('--mlp_dim', nargs='+', default=[0, 1024, 512, 256, 128, 1], type=int,help='# of dimensions of mlp')
         g_model.add_argument('--mlp_dim_color', nargs='+', default=[513, 1024, 512, 256, 128, 3],
                              type=int, help='# of dimensions of color mlp')
 
@@ -153,15 +160,27 @@ class BaseOptions():
 
     def setNameFromOptions(self, opt):
         baseName = opt.name
+        type_name = "OCC"
+
+        if opt.predict_normal:
+            type_name = "NORMAL"
+        elif opt.render_normals:
+            type_name = "RENDER"
+
         input_type = "nml" if opt.use_normal_input else "bp"
+        if opt.use_gan_input:
+            input_type = "gan"
+
         filter_hg = str(opt.hourglass_dim)
         sample_count = str(opt.num_sample_inout)
         nml_loss = "nml_loss" if opt.use_normal_loss else ""
         skip_ds = "sds" if opt.skip_downsample else ""
+        super_res = "superRes" if opt.super_res else ""
+        unet = "unet" if opt.use_unet else "hg"
         mlp_type = opt.mlp_type
         mlp_sizes = '_'.join(str(x) for x in opt.mlp_dim)
 
-        return '_'.join(str(x) for x in [baseName,input_type, filter_hg, sample_count, nml_loss, skip_ds, mlp_type, mlp_sizes])
+        return '_'.join(str(x) for x in [baseName, type_name, unet, input_type, super_res, filter_hg, sample_count, nml_loss, skip_ds, mlp_type])
 
     def saveOptToFile(self, opt):
         savePath = '%s/%s/options.txt' % (opt.checkpoints_path, opt.name)
@@ -170,8 +189,9 @@ class BaseOptions():
 
         print("Saved options to {0}".format(savePath))
 
-    def loadOptFromFile(self, name, checkPointsPath = "../../trainedModels"):
+    def loadOptFromFile(self, name, checkPointsPath = "./trainedModels"):
         loadPath = '%s/%s/options.txt' % (checkPointsPath, name)
+
         if os.path.exists(loadPath):
             parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
             parser = self.initialize(parser)
@@ -188,7 +208,16 @@ class BaseOptions():
         opt = self.gather_options()
 
         #Set first mlp dim according to filter sizes
-        opt.mlp_dim[0] = 1808 #opt.hourglass_dim * opt.num_views + 4
+        if opt.use_unet:
+            opt.mlp_dim[0] = 512+3
+        else:
+            opt.mlp_dim[0] = opt.hourglass_dim * opt.num_views + 3
+
+        #if opt.super_res:
+        #    opt.mlp_dim[0] = opt.mlp_dim[0] +  opt.hourglass_dim//2 * opt.num_views
+
+        if opt.predict_normal:
+            opt.mlp_dim[-1] = 3
 
         #if opt.max_train_size != -1:
             #opt.no_gen_mesh = True

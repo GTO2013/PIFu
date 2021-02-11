@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from ..net_util import *
-
+import torch.utils.checkpoint as checkpoint
 
 class HourGlass(nn.Module):
     def __init__(self, num_modules, depth, num_features, norm='batch', groupsize =32):
@@ -66,7 +66,7 @@ class HGFilter(nn.Module):
 
         # Base part
         #self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=1 if self.opt.skip_downsample else 2, padding=3)
-        self.conv1 = nn.Conv2d(3 if self.opt.use_normal_input else 1, 64, kernel_size=7, stride=1 if self.opt.skip_downsample else 2, padding=3)
+        self.conv1 = nn.Conv2d(4 if opt.use_gan_input else 1, 64, kernel_size=7, stride=1 if self.opt.skip_downsample else 2, padding=3)
 
         if self.opt.norm == 'batch':
             self.bn1 = nn.BatchNorm2d(64) # 64 before
@@ -86,10 +86,10 @@ class HGFilter(nn.Module):
                 raise NameError('Unknown Fan Filter setting!')
 
         dim = 64 #64 before
-        groupNormSize = 32 #32 Before
+        groupNormSize = 16 #32 Before
 
-        self.conv3 = ConvBlock(dim, 128, self.opt.norm, groupNormSize)
-        self.conv4 = ConvBlock(128, self.opt.hourglass_dim_internal, self.opt.norm, groupNormSize)
+        self.conv3 = ConvBlock(dim, 64, self.opt.norm, groupNormSize)
+        self.conv4 = ConvBlock(64, self.opt.hourglass_dim_internal, self.opt.norm, groupNormSize)
 
         # Stacking part
         for hg_module in range(self.num_modules):
@@ -109,6 +109,10 @@ class HGFilter(nn.Module):
                 self.add_module(
                     'bl' + str(hg_module), nn.Conv2d(self.opt.hourglass_dim_internal, self.opt.hourglass_dim_internal, kernel_size=1, stride=1, padding=0))
                 self.add_module('al' + str(hg_module), nn.Conv2d(opt.hourglass_dim, self.opt.hourglass_dim_internal, kernel_size=1, stride=1, padding=0))
+
+        if self.opt.super_res:
+            self.convFinal = ConvBlock(opt.hourglass_dim, opt.hourglass_dim, self.opt.norm, groupNormSize)
+            #self.convFinalFinal = ConvBlock(opt.hourglass_dim, opt.hourglass_dim, self.opt.norm, groupNormSize)
 
     def forward(self, x):
         x = F.relu(self.bn1(self.conv1(x)), True)
@@ -132,7 +136,10 @@ class HGFilter(nn.Module):
 
         previous = x
 
-        outputs = []
+        #outputs = []
+        finalOut = None
+        tmp_out = None
+
         for i in range(self.num_modules):
             hg = self._modules['m' + str(i)](previous)
 
@@ -143,12 +150,19 @@ class HGFilter(nn.Module):
                         (self._modules['conv_last' + str(i)](ll)), True)
 
             # Predict heatmaps
-            tmp_out = self._modules['l' + str(i)](ll)
-            outputs.append(tmp_out)
+            #self._modules['l' + str(i)](ll)
+            tmp_out = checkpoint.checkpoint(self._modules['l' + str(i)], ll)
+            #outputs.append(tmp_out)
 
             if i < self.num_modules - 1:
                 ll = self._modules['bl' + str(i)](ll)
                 tmp_out_ = self._modules['al' + str(i)](tmp_out)
                 previous = previous + ll + tmp_out_
+            elif self.opt.super_res:
+                    up2 = F.interpolate(tmp_out, scale_factor=2, mode='bicubic', align_corners=True)
+                    tmp_out = self.convFinal(up2)
+                    #up3 = F.interpolate(tmp_out, scale_factor=2, mode='bicubic', align_corners=True)
+                    #tmp_out = self.convFinal(up3)
 
-        return outputs, tmpx.detach(), normx
+        #return outputs, finalOut, tmpx.detach(), normx
+        return tmp_out

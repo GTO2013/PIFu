@@ -1,10 +1,9 @@
 from torch.utils.data import Dataset
-import sys
 import torch.nn.functional as F
 from .ParallelDataLoader import loadData, loadDataParallel
 
 from src.datasetInterfaces import datasetInterfaceUnity, datasetInterfaceProcessed
-from src.utils import viewUtils
+from src.utils import viewUtils, imageUtils
 import numpy as np
 import os
 import random
@@ -17,6 +16,10 @@ import matplotlib.pyplot as plt
 import logging
 import math
 from ..train_util import make_rotate, save_samples_rgb, save_samples_truncted_prob
+from src.pix2pix.options.test_options import TestOptions
+from src.pix2pix.models import create_model
+
+import argparse
 
 log = logging.getLogger('trimesh')
 log.setLevel(40)
@@ -57,7 +60,7 @@ class TrainDataset(Dataset):
         self.to_tensor = transforms.Compose([
             #transforms.Resize(self.load_size),
             transforms.ToTensor(),
-            #transforms.Normalize(0.5, 0.5)
+            transforms.Normalize(0.5, 0.5)
             #transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
         ])
 
@@ -73,6 +76,29 @@ class TrainDataset(Dataset):
         self.points_normals_dic = None
         self.normals_dic = None
         self.views = None
+        self.gan_model = None
+
+        if self.opt.use_gan_input:
+            optGan = TestOptions().parse(["--input_nc", "3", "--output_nc", "4",
+                                          "--preprocess", "none",
+                                          "--epoch", str(self.opt.gan_epoch),
+                                          "--direction", "AtoB",
+                                          "--batch_size", "1",
+                                          "--gpu_ids", "-1",
+                                          "--name", "blueprint2ND",
+                                          "--model", "pix2pix",
+                                          "--dataset_mode", "template"])
+
+            optGan.num_threads = 0
+            optGan.batch_size = 1
+            optGan.serial_batches = True
+            optGan.no_flip = True
+            optGan.display_id = -1
+            optGan.test = True
+            optGan.checkpoints_dir = r"src\pix2pix\checkpoints"
+
+            self.gan_model = create_model(optGan)  # create a model given opt.model and other options
+            self.gan_model.setup(optGan)  # regular setup: load and print networks; create schedulers
 
         if not self.is_eval:
             points, sdf, pointsNormals, normals = loadDataParallel(self.root, self.subjects, self.use_normals)
@@ -90,18 +116,22 @@ class TrainDataset(Dataset):
             listAll = listAll[:min(len(listAll), self.opt.max_train_size)]
 
         for subject in listAll:
-            path = os.path.join(self.root, subject, 'sdf.npy')
-            if os.path.exists(path):
-                testDatatype = np.load(path)
-                if testDatatype.dtype is np.dtype(np.float32):
-                    if os.path.exists(os.path.join(self.root, subject, 'top_Normals.npy' if self.use_normals_input else 'top_Blueprint.npy')):
-                        all_subjects.append(subject)
+            try:
+                path = os.path.join(self.root, subject, 'sdf.npy')
+                if os.path.exists(path):
+                    testDatatype = np.load(path,allow_pickle=True)
+                    if testDatatype.dtype is np.dtype(np.float32):
+                        if os.path.exists(os.path.join(self.root, subject, 'top_Normals.npy' if self.use_normals_input else 'top_Blueprint.npy')):
+                            all_subjects.append(subject)
+                        else:
+                            print("%s has no .npy render!" % subject)
                     else:
-                        print("%s has no .npy render!" % subject)
+                        print("Type is not float!")
                 else:
-                    print("Type is not float!")
-            else:
-                print("%s has no sdf file!" % subject)
+                    print("%s has no sdf file!" % subject)
+            except Exception as e:
+                print(e)
+
 
         #Make sure subject count is divisible by batchsize for multi gpu
         if len(all_subjects) % self.opt.batch_size != 0:
@@ -126,47 +156,24 @@ class TrainDataset(Dataset):
 
     def set_views_from_path(self, subject):
         sample_path = os.path.join(self.root, subject)
+        bb = datasetInterfaceUnity.getBoundingBox(sample_path)
+
         if self.use_normals_input:
             views = datasetInterfaceProcessed.getViewsNormals(sample_path)
         else:
             views = datasetInterfaceProcessed.getViewsBlueprint(sample_path)
 
-            if not self.is_eval and random.uniform(0,1) < 0.4:
-                if random.uniform(0, 1) < 0.5:
-                    views = viewUtils.dilateViews(views, kernelSize=2, iterations=1)
-                else:
-                    views = viewUtils.thinViews(views)
+        if not self.use_normals_input and not self.is_eval:
+            views = viewUtils.augmentViews(views, self.opt.random_scale, self.opt.loadSize, bb)
 
-        #Scale smaller
-        if not self.is_eval and not self.use_normals_input and self.opt.random_scale and random.uniform(0,1) < 0.5:
-            rand_scale = random.uniform(0.5, 0.8)
-            views = viewUtils.resizeSquareViews(views, int(viewUtils.getMaxDimension(views) * rand_scale), cv2.INTER_AREA)
+            if self.opt.use_gan_input:
+                views = viewUtils.resizeViews(views, self.opt.loadSize)
 
-        #Resize to base resolution
-        views = viewUtils.resizeSquareViews(views, self.load_size, cv2.INTER_AREA)
-        bb = datasetInterfaceUnity.getBoundingBox(sample_path)
-        views = viewUtils.trimViewsByBB(views, bb)
+            #views = viewUtils.colorcodeViews(views)
 
-        if not self.is_eval and not self.use_normals_input:
-            newViews = dict()
-
-            # Add random ground line
-            for key in views:
-                img = views[key]
-                if key != "top":
-                    if random.uniform(0,1) < 0.4:
-                        img[-1:img.shape[0],:] = random.randint(0,40)
-
-                newViews[key] = img
-
-            views = newViews
-            if random.uniform(0,1) < 0.7:
-                views = viewUtils.addNoiseToViews(views, blackNoise=random.randint(5,20), blackNoiseVar=5)
-            if random.uniform(0, 1) < 0.7:
-                views = viewUtils.addJpegNoiseToViews(views, random.randint(40,100))
+        #viewUtils.showViews(views)
 
         self.views = views
-        #viewUtils.showViews(self.views)
 
     def get_render(self, subject, num_views):
         '''
@@ -190,11 +197,25 @@ class TrainDataset(Dataset):
         calib_list = []
         render_list = []
         extrinsic_list = []
+        normal_list = []
+        depth_list = []
+
+        normal_views = None
+        depth_views = None
+
+        if self.opt.render_normals:
+            normal_views = datasetInterfaceProcessed.getViewsNormals(os.path.join(self.root, subject))
+            normal_views = viewUtils.resizeViews(normal_views, self.opt.loadSize)
+            normal_views = viewUtils.trimViewsByBB(normal_views, self.bounding_box)
+
+            depth_views = datasetInterfaceProcessed.getViewsDepth(os.path.join(self.root, subject))
+            depth_views = viewUtils.resizeViews(depth_views, self.opt.loadSize)
+            depth_views = viewUtils.trimViewsByBB(depth_views, self.bounding_box)
 
         # random flip
         flip = False
-        if self.is_train and self.opt.random_flip and np.random.rand() > 0.5:
-            flip = True
+        #if self.is_train and self.opt.random_flip and np.random.rand() > 0.5:
+            #flip = True
 
         for idx, yaw in enumerate(yaw_list):
             pitch = 0
@@ -224,21 +245,23 @@ class TrainDataset(Dataset):
             # Transform under image pixel space
             trans_intrinsic = np.identity(4)
 
-            #dataRen = np.load(render_path)
-            #render = Image.fromarray(dataRen, mode='RGB' if self.use_normals else "L")
+            render = Image.fromarray(self.views[poseName], mode='L')
 
-            render = Image.fromarray(self.views[poseName], mode='RGB' if self.use_normals_input else "L")
-            #render = Image.open(render_path).convert('L')
-            #render = Image.open(render_path).convert('RGB')
+            if self.opt.render_normals:
+                normal = Image.fromarray(normal_views[poseName], mode='RGB')
+                normal_img_tensor = transforms.ToTensor()(normal)
+                normal_img_tensor = F.normalize(normal_img_tensor, dim=0, eps=1e-8)
+                depth_list.append(np.expand_dims(depth_views[poseName], 0))
+                normal_list.append(normal_img_tensor)
 
             #render = render.resize((self.load_size, self.load_size), Image.BILINEAR)
 
-            if True:#(yaw == 90 and pitch == 0) or (yaw == 90 and pitch == 90):
+            if True:# (yaw == 90 and pitch == 0) or (yaw == 90 and pitch == 90):
                 render = ImageOps.mirror(render)
 
-                if flip:
-                    scale_intrinsic[0, 0] *= -1
-                    render = transforms.RandomHorizontalFlip(p=1.0)(render)
+                #if flip:
+                #    scale_intrinsic[0, 0] *= -1
+                #    render = transforms.RandomHorizontalFlip(p=1.0)(render)
 
             if self.is_train:
                 # Pad images
@@ -274,16 +297,26 @@ class TrainDataset(Dataset):
                     render = render.filter(blur)
 
             intrinsic = np.matmul(trans_intrinsic, np.matmul(uv_intrinsic, scale_intrinsic))
-            calib = torch.Tensor(np.matmul(intrinsic, extrinsic)).float()
-            extrinsic = torch.Tensor(extrinsic).float()
+            calib = torch.Tensor(np.matmul(intrinsic, extrinsic))
+            extrinsic = torch.Tensor(extrinsic)
 
-            render = self.to_tensor(render)
+            if not self.opt.use_gan_input:
+                render = self.to_tensor(render)
+
             render_list.append(render)
             calib_list.append(calib)
             extrinsic_list.append(extrinsic)
 
+        if not self.opt.render_normals:
+            depth_list = None
+            normal_list = None
+
+        self.views = None
+
         return {
             'img': render_list,
+            'img_nml': normal_list,
+            'img_depth': depth_list,
             'calib': torch.stack(calib_list, dim=0),
             'extrinsic': torch.stack(extrinsic_list, dim=0),
         }
@@ -295,10 +328,9 @@ class TrainDataset(Dataset):
             torch.manual_seed(1991)
 
         #bounds = {'b_min': self.B_MIN, 'b_max': self.B_MAX}
-        bb = datasetInterfaceUnity.getBoundingBox(os.path.join(self.root, subject))
-        minBB = np.array([bb['min'][0] - 0.05, bb['min'][1] - 0.05, bb['min'][2] - 0.05])
-        maxBB = np.array([bb['max'][0] + 0.05, bb['max'][1] + 0.05, bb['max'][2] + 0.05])
-        bounds = {'b_min': minBB - 0.5, 'b_max': maxBB - 0.5}
+        bb = self.bounding_box#datasetInterfaceUnity.getBoundingBox(os.path.join(self.root, subject))
+        minBB = np.array([bb['min'][0] - 0.05, bb['min'][1] - 0.05, bb['min'][2] - 0.05]) - 0.5
+        maxBB = np.array([bb['max'][0] + 0.05, bb['max'][1] + 0.05, bb['max'][2] + 0.05]) - 0.5
 
         normals_points = None
         normals = None
@@ -334,8 +366,9 @@ class TrainDataset(Dataset):
 
             # Make sure they are normalized
             normals = F.normalize(normals, dim=0, eps=1e-8)
+            #print(normals)
             if self.opt.debug:
-                normals_rgb = (normals + 1) / 0.5
+                normals_rgb = (normals + 1) * 0.5
                 save_samples_rgb('pointclouds/normals_{0}.ply'.format(subject), normals_points.T, normals_rgb.T)
 
         #sdf = np.clip(sdf, -self.opt.sigma, self.opt.sigma)
@@ -378,8 +411,39 @@ class TrainDataset(Dataset):
             'samples': samples,
             'labels': labels,
             'samples_normals': normals_points,
-            'normals': normals
-        }, bounds
+            'normals': normals,
+            'b_min': minBB,
+            'b_max': maxBB
+        }
+
+    def applyGANToViews(self, render_data):
+
+        new_views = []
+        #back,side,top,front
+        for idx, view in enumerate(render_data['img']):
+            A = view
+            #A = Image.fromarray(view, mode="RGB")
+            A = self.to_tensor(A).unsqueeze(0)
+
+            with torch.no_grad():
+                self.gan_model.real_A = A
+                self.gan_model.forward()
+
+            img = self.gan_model.fake_B.cpu().numpy()[0,:,:,:]
+            img = np.transpose(img, [1,2,0])
+            new_views.append(img)
+
+        views_dict = {'back':new_views[0], 'side': new_views[1], 'top': new_views[2], 'front':new_views[3]}
+        #new_views = views_dict
+        new_views = viewUtils.trimViewsByBB(views_dict, self.bounding_box)
+        #viewUtils.showViews(new_views)
+
+        for key in new_views:
+            #new_views[key] = np.transpose(new_views[key], [1, 2, 0])
+            new_views[key] = np.transpose(new_views[key], [2,0,1])
+            new_views[key] = torch.Tensor(new_views[key])
+
+        return {"img": [new_views['back'], new_views['side'], new_views['top'], new_views['front']]}
 
     def get_item(self, index):
         sid = index % len(self.subjects)
@@ -394,19 +458,20 @@ class TrainDataset(Dataset):
             'b_min': self.B_MIN,
             'b_max': self.B_MAX,
         }
-
-        if self.opt.num_sample_inout:
-            sample_data, boundingBox = self.select_sampling_method(subject)
-            res.update(sample_data)
-
-        res.update(boundingBox)
-
         render_data = self.get_render(subject, num_views=self.num_views)
         res.update(render_data)
 
-        if self.opt.debug:
+        if self.opt.num_sample_inout:
+            sample_data = self.select_sampling_method(subject)
+            res.update(sample_data)
+
+        if self.opt.use_gan_input:
+            gan_output = self.applyGANToViews(render_data)
+            res.update(gan_output)
+
+        if False:
             for i in range(4):
-                img = np.uint8((np.transpose(render_data['img'][i].numpy(), (1, 2, 0)) * 0.5 + 0.5)[:, :, ::-1] * 255.0)
+                img = np.uint8((np.transpose(res['img'][i].numpy(), (1, 2, 0)) * 0.5 + 0.5)[:, :, ::-1] * 255.0)
                 rot = render_data['calib'][i,:3, :3]
                 trans = render_data['calib'][i,:3, 3:4]
                 pts = torch.addmm(trans, rot, sample_data['samples'][:, sample_data['labels'][0] > 0.5])  # [3, N]
