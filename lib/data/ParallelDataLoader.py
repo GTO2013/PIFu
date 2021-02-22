@@ -9,10 +9,13 @@ import psutil
 #This loads sdf and normals from the preprocessing step in parallel
 ##########################################################
 
-def loadData(root_dir, sub_name, loadNormals=True):
+def loadData(root_dir, sub_name, loadNormals=True, regression=False):
     combinedPath = os.path.join(root_dir, sub_name)
     pointsSDF = np.load(os.path.join(combinedPath, 'points.npy'))
-    sdf = np.load(os.path.join(combinedPath, 'sdf.npy')) < 0
+    sdf = np.load(os.path.join(combinedPath, 'sdf.npy'))
+
+    if not regression:
+        sdf = sdf < 0
 
     pointsNormals = None
     normals = None
@@ -24,13 +27,13 @@ def loadData(root_dir, sub_name, loadNormals=True):
     return pointsSDF, sdf, pointsNormals, normals
 
 
-def load_chunk(root_dir, foldersLocal, pointsSDF, sdf, pointsNormals, normals, loadNormals = True):
+def load_chunk(root_dir, foldersLocal, pointsSDF, sdf, pointsNormals, normals, loadNormals = True, regression=False):
 
     for i, sub_name in enumerate(foldersLocal):
         if psutil.virtual_memory().percent < 85:
             #print("Loading ... {0} / {1}".format(i, len(foldersLocal)))
 
-            pointsSDF_l, sdf_l, pointsNormals_l, normals_l = loadData(root_dir, sub_name, loadNormals)
+            pointsSDF_l, sdf_l, pointsNormals_l, normals_l = loadData(root_dir, sub_name, loadNormals, regression)
 
             pointsSDF[sub_name] = pointsSDF_l
             sdf[sub_name] = sdf_l
@@ -43,7 +46,7 @@ def load_chunk(root_dir, foldersLocal, pointsSDF, sdf, pointsNormals, normals, l
             break
 
 
-def loadDataParallel(root_dir, folders, loadNormals):
+def loadDataParallel(root_dir, folders, loadNormals, regression):
 
     num_cpus = psutil.cpu_count(logical=False)
     chunks = [folders[i::num_cpus] for i in range(num_cpus)]
@@ -54,7 +57,7 @@ def loadDataParallel(root_dir, folders, loadNormals):
     pointsNormal = manager.dict()
     normals = manager.dict()
 
-    job = [Process(target=load_chunk, args=(root_dir, chunks[i], points, sdf, pointsNormal, normals, loadNormals)) for i in range(num_cpus)]
+    job = [Process(target=load_chunk, args=(root_dir, chunks[i], points, sdf, pointsNormal, normals, loadNormals, regression)) for i in range(num_cpus)]
     _ = [p.start() for p in job]
     _ = [p.join() for p in job]
 

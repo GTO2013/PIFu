@@ -4,13 +4,16 @@ from .geometry import *
 from PIL import Image
 from lib.custom_collate import move_to_gpu
 
-def gen_mesh(opt, net, cuda, data, save_path, use_octree=True):
+def gen_mesh(opt, net, cuda, data, save_path, use_octree=True, predict_vertex_normals = True, dual_contouring=False):
+    #bb_min = np.array([-0.5,-0.5,-0.5])#data['bounding_boxes'][0]['b_min']
+    #bb_max = np.array([0.5, 0.5, 0.5])#data['bounding_boxes'][0]['b_max']
     bb_min = data['bounding_boxes'][0]['b_min']
     bb_max = data['bounding_boxes'][0]['b_max']
 
     try:
-        verts, faces, _, _ = reconstruction(net, data['images'], cuda, data['calib'], data['size'],
-                                            opt.resolution, bb_min, bb_max, use_octree=use_octree)
+        verts, faces, normals, _ = reconstruction(net, data['images'], cuda, data['calib'], data['size'],
+                                            opt.resolution, bb_min, bb_max, use_octree=use_octree,
+                                                  predict_vertex_normals=predict_vertex_normals, dual_contouring=dual_contouring)
         #verts_tensor = torch.from_numpy(verts.T).unsqueeze(0).to(device=cuda).float()
         #xyz_tensor = net.projection(verts_tensor, calib_tensor[:1])
         #uv = xyz_tensor[:, :2, :]
@@ -19,14 +22,14 @@ def gen_mesh(opt, net, cuda, data, save_path, use_octree=True):
         if save_path is not None:
             save_obj_mesh(save_path, verts, faces)
 
-        return [verts, faces]
+        return [verts, faces, normals]
         #save_obj_mesh_with_color(save_path, verts, faces, color)
     except Exception as e:
         import traceback
         traceback.print_exc()
         print('Can not create marching cubes at this time.')
 
-    return [None, None]
+    return [None, None, None]
 
 def gen_mesh_color(opt, netG, netC, cuda, data, save_path, use_octree=True):
     image_tensor = data['img'].to(device=cuda)

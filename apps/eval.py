@@ -29,7 +29,7 @@ class Evaluator:
         self.cuda = cuda
         self.netG = netG
 
-    def eval(self, views, bounding_box, save_path, use_octree=True):
+    def eval(self, views, bounding_box, save_path, use_octree=True, predict_normal = True, dual_contouring=True):
         '''
         Evaluate a data point
         :param data: a dict containing at least ['name'], ['image'], ['calib'], ['b_min'] and ['b_max'] tensors.
@@ -50,10 +50,6 @@ class Evaluator:
         opt = self.opt
         with torch.no_grad():
             self.netG.eval()
-            #if self.netC:
-            #    self.netC.eval()
-            #save_path = '%s/%s/result_%s.obj' % (opt.results_path, opt.name, dataset[0]['name'])
-            #if self.netC:
-            #    return gen_mesh_color(opt, self.netG, self.netC, self.cuda, data, save_path, use_octree=use_octree)
-            #else:
-            return gen_mesh(opt, self.netG, self.cuda, data, save_path, use_octree=use_octree)
+            verts, faces, normals = gen_mesh(opt, self.netG, self.cuda, data, save_path, use_octree=use_octree,
+                                              predict_vertex_normals = predict_normal, dual_contouring=dual_contouring)
+            return verts, faces, normals

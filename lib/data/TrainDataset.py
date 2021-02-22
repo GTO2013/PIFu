@@ -101,7 +101,8 @@ class TrainDataset(Dataset):
             self.gan_model.setup(optGan)  # regular setup: load and print networks; create schedulers
 
         if not self.is_eval:
-            points, sdf, pointsNormals, normals = loadDataParallel(self.root, self.subjects, self.use_normals)
+            points, sdf, pointsNormals, normals = loadDataParallel(self.root, self.subjects, self.use_normals,
+                                                                   regression = opt.regression)
 
             self.points_dic = points
             self.sdf_dic = sdf
@@ -171,8 +172,9 @@ class TrainDataset(Dataset):
 
             #views = viewUtils.colorcodeViews(views)
 
-        #viewUtils.showViews(views)
+        viewUtils.showViews(views)
 
+        self.bounding_box = bb
         self.views = views
 
     def get_render(self, subject, num_views):
@@ -327,8 +329,7 @@ class TrainDataset(Dataset):
             np.random.seed(1991)
             torch.manual_seed(1991)
 
-        #bounds = {'b_min': self.B_MIN, 'b_max': self.B_MAX}
-        bb = self.bounding_box#datasetInterfaceUnity.getBoundingBox(os.path.join(self.root, subject))
+        bb = self.bounding_box
         minBB = np.array([bb['min'][0] - 0.05, bb['min'][1] - 0.05, bb['min'][2] - 0.05]) - 0.5
         maxBB = np.array([bb['max'][0] + 0.05, bb['max'][1] + 0.05, bb['max'][2] + 0.05]) - 0.5
 
@@ -343,15 +344,38 @@ class TrainDataset(Dataset):
                 normals_points = self.points_normals_dic[subject]
                 normals = self.normals_dic[subject]
         else:
-            points, sdf, normals_points, normals = loadData(self.root, subject,  self.use_normals)
+            points, sdf, normals_points, normals = loadData(self.root, subject,  self.use_normals, self.opt.regression)
 
         #Occupany sampling
         #Load more points than we need to we can balance them later
-        num = 4 * self.num_sample_inout + self.num_sample_inout // 4
-        #num = self.num_sample_inout
-        index = np.random.choice(sdf.shape[0], num, replace=False)
-        sample_points = points[index]
-        inside = sdf[index]
+        #num = 4 * self.num_sample_inout + self.num_sample_inout // 4
+        num = self.num_sample_inout
+
+        if self.opt.regression:
+            sdf = np.clip(sdf, -self.opt.sigma, self.opt.sigma)
+            sdf = sdf * (1/self.opt.sigma)
+            sdf = -sdf * 0.5 + 0.5
+            maskInside = sdf >= 0.5
+            maskOutside = sdf < 0.5
+        else:
+            maskInside = sdf
+            maskOutside = np.logical_not(sdf)
+
+        inside = sdf[maskInside]
+        outside = sdf[maskOutside]
+
+        insideIdx = np.random.choice(inside.shape[0], min(inside.shape[0], num//2), replace=False)
+        outsideIdx = np.random.choice(outside.shape[0], min(outside.shape[0], num - insideIdx.shape[0]), replace=False)
+
+        samples = np.concatenate([points[maskInside][insideIdx], points[maskOutside][outsideIdx]], axis=0)
+        labels = np.concatenate([inside[insideIdx], outside[outsideIdx]], axis=0)
+
+        samples = samples.T
+        labels = np.expand_dims(labels.T, 0)
+
+        #index = np.random.choice(sdf.shape[0], num, replace=False)
+        #sample_points = points[index]
+        #inside = sdf[index]
 
         #samples = sample_points.T
         #labels = np.expand_dims(sdf, 0)
@@ -371,38 +395,32 @@ class TrainDataset(Dataset):
                 normals_rgb = (normals + 1) * 0.5
                 save_samples_rgb('pointclouds/normals_{0}.ply'.format(subject), normals_points.T, normals_rgb.T)
 
-        #sdf = np.clip(sdf, -self.opt.sigma, self.opt.sigma)
-        #sdf = sdf * (1/self.opt.sigma)
-        #sdf = sdf * 0.5 + 0.5
+        if False:
+            #Balance all points to be even 33/33/33 inside, outside, on surface
+            if self.opt.sample_on_surface and self.use_normals:
+                inside_points = sample_points[inside]
+                outside_points = sample_points[np.logical_not(inside)]
 
-        #samples = sample_points.T
-        #labels = np.expand_dims(sdf, 0)
+                nin = inside_points.shape[0]
+                inside_points = inside_points[:self.num_sample_inout // 3] if nin > self.num_sample_inout // 3 else inside_points
+                outside_points = outside_points[:self.num_sample_inout // 3] if nin > self.num_sample_inout // 3 else outside_points[:(self.num_sample_inout - nin)]
 
-        #Balance all points to be even 33/33/33 inside, outside, on surface
-        if self.opt.sample_on_surface and self.use_normals:
-            inside_points = sample_points[inside]
-            outside_points = sample_points[np.logical_not(inside)]
+                rest_count = self.num_sample_inout - len(inside_points) - len(outside_points)
+                normals_points_surface = normals_points.T[:rest_count]
 
-            nin = inside_points.shape[0]
-            inside_points = inside_points[:self.num_sample_inout // 3] if nin > self.num_sample_inout // 3 else inside_points
-            outside_points = outside_points[:self.num_sample_inout // 3] if nin > self.num_sample_inout // 3 else outside_points[:(self.num_sample_inout - nin)]
+                samples = np.concatenate([inside_points, outside_points, normals_points_surface], 0).T
+                labels = np.concatenate([np.ones((1, inside_points.shape[0])), np.zeros((1, outside_points.shape[0])), np.full((1, normals_points_surface.shape[0]), fill_value=0.5)], 1)
+            #Balance all points to be even 50/50 outside/inside
+            else:
+                inside_points = sample_points[inside]
+                outside_points = sample_points[np.logical_not(inside)]
 
-            rest_count = self.num_sample_inout - len(inside_points) - len(outside_points)
-            normals_points_surface = normals_points.T[:rest_count]
+                nin = inside_points.shape[0]
+                inside_points = inside_points[:self.num_sample_inout // 2] if nin > self.num_sample_inout // 2 else inside_points
+                outside_points = outside_points[:self.num_sample_inout // 2] if nin > self.num_sample_inout // 2 else outside_points[:(self.num_sample_inout - nin)]
 
-            samples = np.concatenate([inside_points, outside_points, normals_points_surface], 0).T
-            labels = np.concatenate([np.ones((1, inside_points.shape[0])), np.zeros((1, outside_points.shape[0])), np.full((1, normals_points_surface.shape[0]), fill_value=0.5)], 1)
-        #Balance all points to be even 50/50 outside/inside
-        else:
-            inside_points = sample_points[inside]
-            outside_points = sample_points[np.logical_not(inside)]
-
-            nin = inside_points.shape[0]
-            inside_points = inside_points[:self.num_sample_inout // 2] if nin > self.num_sample_inout // 2 else inside_points
-            outside_points = outside_points[:self.num_sample_inout // 2] if nin > self.num_sample_inout // 2 else outside_points[:(self.num_sample_inout - nin)]
-
-            samples = np.concatenate([inside_points, outside_points], 0).T
-            labels = np.concatenate([np.ones((1, inside_points.shape[0])), np.zeros((1, outside_points.shape[0]))], 1)
+                samples = np.concatenate([inside_points, outside_points], 0).T
+                labels = np.concatenate([np.ones((1, inside_points.shape[0])), np.zeros((1, outside_points.shape[0]))], 1)
 
         samples = torch.Tensor(samples).float()
         labels = torch.Tensor(labels).float()

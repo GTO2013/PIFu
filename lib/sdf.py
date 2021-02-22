@@ -27,6 +27,17 @@ def create_grid(resX, resY, resZ, b_min=np.array([0, 0, 0]), b_max=np.array([1, 
     return coords, coords_matrix
 
 
+def batch_eval_normal(features, points, eval_func, num_samples=512 * 512 * 512):
+    num_pts = points.shape[1]
+    sdf = np.zeros((3, num_pts))
+    num_batches = num_pts // num_samples
+    for i in range(num_batches):
+        sdf[:, i * num_samples:i * num_samples + num_samples] = eval_func(features, points[:, i * num_samples:i * num_samples + num_samples])
+    if num_pts % num_samples:
+        sdf[:, num_batches * num_samples:] = eval_func(features, points[:, num_batches * num_samples:])
+
+    return sdf
+
 def batch_eval(features, points, eval_func, num_samples=512 * 512 * 512):
     num_pts = points.shape[1]
     sdf = np.zeros(num_pts)

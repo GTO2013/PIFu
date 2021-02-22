@@ -20,6 +20,7 @@ class BaseOptions():
         g_exp.add_argument('--num_views', type=int, default=1, help='How many views to use for multiview network.')
         g_exp.add_argument('--render_normals', action='store_true')
         g_exp.add_argument('--super_res', action='store_true')
+        g_exp.add_argument("--regression", action='store_true')
 
         # Training related
         g_train = parser.add_argument_group('Training')
