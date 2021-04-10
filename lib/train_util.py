@@ -4,7 +4,7 @@ from .geometry import *
 from PIL import Image
 from lib.custom_collate import move_to_gpu
 
-def gen_mesh(opt, net, cuda, data, save_path, use_octree=True, predict_vertex_normals = True, dual_contouring=False):
+def gen_mesh(opt, net, cuda, data, save_path, num_samples=1000, extr_value = 0.5, use_octree=True, predict_vertex_normals = False, dual_contouring=False):
     #bb_min = np.array([-0.5,-0.5,-0.5])#data['bounding_boxes'][0]['b_min']
     #bb_max = np.array([0.5, 0.5, 0.5])#data['bounding_boxes'][0]['b_max']
     bb_min = data['bounding_boxes'][0]['b_min']
@@ -12,8 +12,8 @@ def gen_mesh(opt, net, cuda, data, save_path, use_octree=True, predict_vertex_no
 
     try:
         verts, faces, normals, _ = reconstruction(net, data['images'], cuda, data['calib'], data['size'],
-                                            opt.resolution, bb_min, bb_max, use_octree=use_octree,
-                                                  predict_vertex_normals=predict_vertex_normals, dual_contouring=dual_contouring)
+                                            opt.resolution, bb_min, bb_max, use_octree=use_octree, extr_value = extr_value,
+                                                  predict_vertex_normals=predict_vertex_normals, num_samples=num_samples, dual_contouring=dual_contouring)
         #verts_tensor = torch.from_numpy(verts.T).unsqueeze(0).to(device=cuda).float()
         #xyz_tensor = net.projection(verts_tensor, calib_tensor[:1])
         #uv = xyz_tensor[:, :2, :]

@@ -1,6 +1,5 @@
 import numpy as np
 
-
 def save_samples_truncted_prob(fname, points, prob):
     '''
     Save the visualization of sampling to a ply file.

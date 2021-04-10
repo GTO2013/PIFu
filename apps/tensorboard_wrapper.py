@@ -15,14 +15,18 @@ def initWriter(opt):
 
 def updateAfterEpoch(epoch, train_errors, test_errors, images_train, images_test):
     if writer is not None:
-        MSE_test, IOU_test, prec_test, recall_test = test_errors
-        writer.add_scalar('test/MSE', MSE_test, epoch)
+        OCC_test, NML_test, EDGES_test, IOU_test, prec_test, recall_test = test_errors
+        writer.add_scalar('test/OCC', OCC_test, epoch)
+        writer.add_scalar('test/NML', NML_test, epoch)
+        writer.add_scalar('test/EDGES', EDGES_test, epoch)
         writer.add_scalar('test/IOU', IOU_test, epoch)
         writer.add_scalar('test/prec', prec_test, epoch)
         writer.add_scalar('test/recall', recall_test, epoch)
 
-        MSE_train, IOU_train, prec_train, recall_train = train_errors
-        writer.add_scalar('train/MSE', MSE_train, epoch)
+        OCC_train, NML_train, EDGES_train, IOU_train, prec_train, recall_train = train_errors
+        writer.add_scalar('train/OCC', OCC_train, epoch)
+        writer.add_scalar('train/NML', NML_train, epoch)
+        writer.add_scalar('train/EDGES', EDGES_train, epoch)
         writer.add_scalar('train/IOU', IOU_train, epoch)
         writer.add_scalar('train/prec', prec_train, epoch)
         writer.add_scalar('train/recall', recall_train, epoch)

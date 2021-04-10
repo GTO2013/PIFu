@@ -6,7 +6,6 @@ dependencies:
 - opencv
 - pytorch
 - json
-- pyexr
 - cv2
 - PIL
 - skimage

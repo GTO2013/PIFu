@@ -9,44 +9,57 @@ import psutil
 #This loads sdf and normals from the preprocessing step in parallel
 ##########################################################
 
-def loadData(root_dir, sub_name, loadNormals=True, regression=False):
+def loadData(root_dir, sub_name, opt):
     combinedPath = os.path.join(root_dir, sub_name)
     pointsSDF = np.load(os.path.join(combinedPath, 'points.npy'))
     sdf = np.load(os.path.join(combinedPath, 'sdf.npy'))
 
-    if not regression:
+    if not opt.regression:
         sdf = sdf < 0
 
     pointsNormals = None
     normals = None
+    edges = None
 
-    if loadNormals:
+    if opt.use_normal_loss or opt.use_edge_loss:
         pointsNormals = np.load(os.path.join(combinedPath, 'points_Normals.npy'))
+
+    if opt.use_normal_loss:
         normals = np.load(os.path.join(combinedPath, 'Normals.npy'))
+    if opt.use_edge_loss:
+        edges = np.load(os.path.join(combinedPath, 'Edges.npy'))
+        #Calc length of each vector
+        edges = np.linalg.norm(edges, axis=1, keepdims=True)
+        #print("Loaded Edges Min: {0}, Max: {1}".format(np.min(edges), np.max(edges)))
 
-    return pointsSDF, sdf, pointsNormals, normals
+    return pointsSDF, sdf, pointsNormals, normals, edges
 
 
-def load_chunk(root_dir, foldersLocal, pointsSDF, sdf, pointsNormals, normals, loadNormals = True, regression=False):
+def load_chunk(root_dir, foldersLocal, pointsSDF_dict, sdf_dict, pointsNormals_dict, normals_dict, edges_dict, opt):
 
     for i, sub_name in enumerate(foldersLocal):
-        if psutil.virtual_memory().percent < 85:
+        if psutil.virtual_memory().percent < 75:
             #print("Loading ... {0} / {1}".format(i, len(foldersLocal)))
 
-            pointsSDF_l, sdf_l, pointsNormals_l, normals_l = loadData(root_dir, sub_name, loadNormals, regression)
+            pointsSDF, sdf, pointsNormals, normals, edges = loadData(root_dir, sub_name, opt)
 
-            pointsSDF[sub_name] = pointsSDF_l
-            sdf[sub_name] = sdf_l
+            pointsSDF_dict[sub_name] = pointsSDF
+            sdf_dict[sub_name] = sdf
 
-            if loadNormals:
-                pointsNormals[sub_name] = pointsNormals_l
-                normals[sub_name] = normals_l
+            if opt.use_normal_loss or opt.use_edge_loss:
+                pointsNormals_dict[sub_name] = pointsNormals
+
+            if opt.use_normal_loss:
+                normals_dict[sub_name] = normals
+
+            if opt.use_edge_loss:
+                edges_dict[sub_name] = edges
         else:
             print("Stopping, running out of memory soon. Rest will be streamed from disc.")
             break
 
 
-def loadDataParallel(root_dir, folders, loadNormals, regression):
+def loadDataParallel(root_dir, folders, opt):
 
     num_cpus = psutil.cpu_count(logical=False)
     chunks = [folders[i::num_cpus] for i in range(num_cpus)]
@@ -56,12 +69,13 @@ def loadDataParallel(root_dir, folders, loadNormals, regression):
     sdf = manager.dict()
     pointsNormal = manager.dict()
     normals = manager.dict()
+    edges = manager.dict()
 
-    job = [Process(target=load_chunk, args=(root_dir, chunks[i], points, sdf, pointsNormal, normals, loadNormals, regression)) for i in range(num_cpus)]
+    job = [Process(target=load_chunk, args=(root_dir, chunks[i], points, sdf, pointsNormal, normals, edges, opt)) for i in range(num_cpus)]
     _ = [p.start() for p in job]
     _ = [p.join() for p in job]
 
-    return points, sdf, pointsNormal, normals
+    return points, sdf, pointsNormal, normals, edges
 
 ##########################################################
 #This loads depth and normal images for the rendering step

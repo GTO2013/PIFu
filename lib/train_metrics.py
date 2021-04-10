@@ -32,23 +32,36 @@ def calc_error(coll,net, cuda, dataset, num_tests):
     if num_tests > len(dataset):
         num_tests = len(dataset)
     with torch.no_grad():
-        erorr_arr, IOU_arr, prec_arr, recall_arr = [], [], [], []
+        error_arr, normal_arr, edges_arr, IOU_arr, prec_arr, recall_arr = [], [], [], [], [], []
 
         for idx in tqdm(range(num_tests)):
-            #ToDO: Normal Loss!
             train_data = move_to_gpu(coll([dataset[idx]]),cuda)
 
-            res, nmls, error = net.forward(train_data['images'], train_data['samples'], train_data['calib'], imgSizes=train_data['size'],
-                                      labels=train_data['labels'], points_nml=train_data['samples_normals'], labels_nml=train_data['normals'])
+            res, _, _, error = net.forward(train_data['images'], train_data['samples'], train_data['calib'],
+                                                  imgSizes=train_data['size'], labels=train_data['labels'],
+                                                  points_surface=train_data['samples_normals'],
+                                                  labels_nml=train_data['normals'], labels_edges=train_data['edges'])
 
             IOU, prec, recall = compute_acc(res, train_data['labels'])
 
-            erorr_arr.append(error['Err(occ)'].mean().item())
+            error_arr.append(error['Err(occ)'].mean().item())
+
+            if error['Err(nml)'] != 0:
+                normal_arr.append(error['Err(nml)'].mean().item())
+            else:
+                normal_arr.append(0)
+
+            if error['Err(edges)'] != 0:
+                edges_arr.append(error['Err(edges)'].mean().item())
+            else:
+                edges_arr.append(0)
+
             IOU_arr.append(IOU.item())
             prec_arr.append(prec.item())
             recall_arr.append(recall.item())
 
-    return np.average(erorr_arr), np.average(IOU_arr), np.average(prec_arr), np.average(recall_arr)
+    return np.average(error_arr), np.average(normal_arr), np.average(edges_arr), \
+           np.average(IOU_arr), np.average(prec_arr), np.average(recall_arr)
 
 def calc_error_color(opt, netG, netC, cuda, dataset, num_tests):
     if num_tests > len(dataset):

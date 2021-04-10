@@ -3,8 +3,7 @@ import numpy as np
 import torch
 from .sdf import create_grid, eval_grid_octree, eval_grid, batch_eval_normal
 from skimage import measure
-from .dual_contouring.dual_contour_3d import dual_contour_3d
-from .dual_contouring.utils_3d import V3
+import time
 
 def reconstructionDualContouring(net, images, cuda, calib_tensor, img_sizes, resolution, b_min, b_max):
     print("Dual Contouring...")
@@ -25,7 +24,7 @@ def reconstructionDualContouring(net, images, cuda, calib_tensor, img_sizes, res
         points = np.expand_dims(points, axis=2)
         points = np.repeat(points, net.num_views, axis=0)
         samples = torch.from_numpy(points).float().to(device=cuda)
-        normal = net.calc_normal(features, samples, calib_tensor, img_sizes)[0][0]
+        normal = net.calc_normal_edges(features, samples, calib_tensor, img_sizes)[0][0]
         normal = normal.detach().cpu().numpy()
         return V3(normal[0], normal[1], normal[2])
 
@@ -36,7 +35,7 @@ def reconstructionDualContouring(net, images, cuda, calib_tensor, img_sizes, res
 
 def reconstruction(net, images, cuda, calib_tensor, img_sizes,
                    resolution, b_min, b_max,
-                   use_octree=False, num_samples=10000, predict_vertex_normals = True, transform=None, dual_contouring=True):
+                   use_octree=False, extr_value = 0.5, num_samples=10000, predict_vertex_normals = False, transform=None, dual_contouring=True):
     '''
     Reconstruct meshes from sdf predicted by the network.
     :param net: a BasePixImpNet object. call image filter beforehead.
@@ -54,43 +53,55 @@ def reconstruction(net, images, cuda, calib_tensor, img_sizes,
         return NotImplementedError()
         #return reconstructionDualContouring(net, images, cuda, calib_tensor, img_sizes, resolution, b_min, b_max)
     else:
+        print("Filtering images ...")
+        time_now = time.perf_counter()
+        print("Filtering Time: {0}".format(time.perf_counter() - time_now))
         features = net.filter(images)
-        print("Marching cubes...")
+        print("Evaluating ...")
+        time_now = time.perf_counter()
 
         # First we create a grid by resolution
         # and transforming matrix for grid coordinates to real world xyz
         coords, mat = create_grid(resolution, resolution, resolution,
                                   b_min, b_max, transform=transform)
 
+        coords = torch.from_numpy(coords).to(device=cuda).float()
+
         # Then we define the lambda function for cell evaluation
         def eval_func(features, points):
-            points = np.expand_dims(points, axis=0)
-            points = np.repeat(points, net.num_views, axis=0)
-            samples = torch.from_numpy(points).to(device=cuda).float()
-            pred = net.query(features, samples, calib_tensor, img_sizes)[0][0]
-            return pred.detach().cpu().numpy()
+            points = points.unsqueeze(0)
+            #samples = points.repeat_interleave(net.num_views, dim=0)
+            pred = net.query(features, points, calib_tensor, img_sizes)[0][0]
+            return pred
 
         # Then we define the lambda normal function for cell evaluation
         def eval_func_normals(features, points):
             points = np.expand_dims(points, axis=0)
             points = np.repeat(points, net.num_views, axis=0)
             samples = torch.from_numpy(points).to(device=cuda).float()
-            pred = net.calc_normal(features, samples, calib_tensor, img_sizes)[0][0:3]
+            pred = net.calc_normal_edges(features, samples, calib_tensor, img_sizes)[0][0:3]
             return pred.detach().cpu().numpy()
 
         # Then we evaluate the grid
         if use_octree:
-            sdf = eval_grid_octree(features, coords, eval_func, num_samples=num_samples)
+            sdf = eval_grid_octree(cuda, features, coords, eval_func, num_samples=num_samples)
         else:
             sdf = eval_grid(features, coords, eval_func, num_samples=num_samples)
 
+        print("Evaluating Time: {0}".format(time.perf_counter() - time_now))
         # Finally we do marching cubes
         try:
-            verts, faces, normals, values = measure.marching_cubes_lewiner(sdf, 0.5)
+            print("Marching Cubes with {0}...".format(extr_value))
+            time_now = time.perf_counter()
+
+            verts, faces, normals, values = measure.marching_cubes_lewiner(sdf, extr_value)
+            print("Marching Cubes: {0}".format(time.perf_counter() - time_now))
+
             # transform verts into world coordinate system
             verts = np.matmul(mat[:3, :3], verts.T) + mat[:3, 3:4]
 
             if predict_vertex_normals:
+                print("Predicting normals...")
                 normals = batch_eval_normal(features, verts, eval_func_normals, num_samples=num_samples)
             else:
                 normals = None

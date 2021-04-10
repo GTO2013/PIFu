@@ -3,7 +3,7 @@ import torch.nn.functional as F
 from .ParallelDataLoader import loadData, loadDataParallel
 
 from src.datasetInterfaces import datasetInterfaceUnity, datasetInterfaceProcessed
-from src.utils import viewUtils, imageUtils
+from src.utils import viewUtils
 import numpy as np
 import os
 import random
@@ -15,14 +15,13 @@ import cv2
 import matplotlib.pyplot as plt
 import logging
 import math
-from ..train_util import make_rotate, save_samples_rgb, save_samples_truncted_prob
+from ..train_util import make_rotate
 from src.pix2pix.options.test_options import TestOptions
 from src.pix2pix.models import create_model
 
-import argparse
-
 log = logging.getLogger('trimesh')
 log.setLevel(40)
+
 
 class TrainDataset(Dataset):
     @staticmethod
@@ -37,9 +36,6 @@ class TrainDataset(Dataset):
 
         sub_dir = "training" if self.is_train else "test"
 
-        self.use_normals_input = opt.use_normal_input
-        self.use_normals = self.opt.use_normal_loss
-
         # Path setup
         self.root = os.path.join(self.opt.dataroot, sub_dir)
         self.B_MIN = np.array([-0.55, -0.55, -0.55])
@@ -52,7 +48,7 @@ class TrainDataset(Dataset):
         self.num_sample_color = self.opt.num_sample_color
         self.num_sample_normals = self.opt.num_sample_normals
 
-        self.yaw_list = list(range(0,181,90))
+        self.yaw_list = list(range(0, 181, 90))
         self.pitch_list = [0, 90]
         self.subjects = self.get_subjects() if not self.is_eval else None
 
@@ -70,16 +66,17 @@ class TrainDataset(Dataset):
                                    hue=opt.aug_hue)
         ])
 
-        self.loadSdf = True
-        self.points_dic = None
+        self.pertubed_points_dic = None
+        self.points_surface_dic = None
         self.sdf_dic = None
-        self.points_normals_dic = None
         self.normals_dic = None
+        self.edges_dic = None
+
         self.views = None
         self.gan_model = None
 
         if self.opt.use_gan_input:
-            optGan = TestOptions().parse(["--input_nc", "3", "--output_nc", "4",
+            opt_gan = TestOptions().parse(["--input_nc", "3", "--output_nc", "3",
                                           "--preprocess", "none",
                                           "--epoch", str(self.opt.gan_epoch),
                                           "--direction", "AtoB",
@@ -89,40 +86,41 @@ class TrainDataset(Dataset):
                                           "--model", "pix2pix",
                                           "--dataset_mode", "template"])
 
-            optGan.num_threads = 0
-            optGan.batch_size = 1
-            optGan.serial_batches = True
-            optGan.no_flip = True
-            optGan.display_id = -1
-            optGan.test = True
-            optGan.checkpoints_dir = r"src\pix2pix\checkpoints"
+            opt_gan.num_threads = 0
+            opt_gan.batch_size = 1
+            opt_gan.serial_batches = True
+            opt_gan.no_flip = True
+            opt_gan.display_id = -1
+            opt_gan.test = True
+            opt_gan.checkpoints_dir = r"C:\Blueprint2Car\checkpoints"
 
-            self.gan_model = create_model(optGan)  # create a model given opt.model and other options
-            self.gan_model.setup(optGan)  # regular setup: load and print networks; create schedulers
+            self.gan_model = create_model(opt_gan)  # create a model given opt.model and other options
+            self.gan_model.setup(opt_gan)  # regular setup: load and print networks; create schedulers
 
         if not self.is_eval:
-            points, sdf, pointsNormals, normals = loadDataParallel(self.root, self.subjects, self.use_normals,
-                                                                   regression = opt.regression)
+            points, sdf, pointsNormals, normals, edges = loadDataParallel(self.root, self.subjects, self.opt)
 
-            self.points_dic = points
+            self.pertubed_points_dic = points
+            self.points_surface_dic = pointsNormals
             self.sdf_dic = sdf
-            self.points_normals_dic = pointsNormals
             self.normals_dic = normals
+            self.edges_dic = edges
 
     def get_subjects(self):
         all_subjects = []
-        listAll = os.listdir(self.root)
+        list_all = os.listdir(self.root)
 
-        if(self.opt.max_train_size > 0):
-            listAll = listAll[:min(len(listAll), self.opt.max_train_size)]
+        if self.opt.max_train_size > 0:
+            list_all = list_all[:min(len(list_all), self.opt.max_train_size)]
 
-        for subject in listAll:
+        for subject in list_all:
             try:
                 path = os.path.join(self.root, subject, 'sdf.npy')
                 if os.path.exists(path):
-                    testDatatype = np.load(path,allow_pickle=True)
-                    if testDatatype.dtype is np.dtype(np.float32):
-                        if os.path.exists(os.path.join(self.root, subject, 'top_Normals.npy' if self.use_normals_input else 'top_Blueprint.npy')):
+                    test_datatype = np.load(path, allow_pickle=True)
+                    if test_datatype.dtype is np.dtype(np.float32):
+                        if os.path.exists(os.path.join(self.root, subject, 'top_Normals.npy' if self.opt.use_normal_input else 'top_Blueprint.npy')):
+                            datasetInterfaceUnity.getBoundingBox(os.path.join(self.root, subject))
                             all_subjects.append(subject)
                         else:
                             print("%s has no .npy render!" % subject)
@@ -159,35 +157,38 @@ class TrainDataset(Dataset):
         sample_path = os.path.join(self.root, subject)
         bb = datasetInterfaceUnity.getBoundingBox(sample_path)
 
-        if self.use_normals_input:
+        if self.opt.use_normal_input:
             views = datasetInterfaceProcessed.getViewsNormals(sample_path)
         else:
             views = datasetInterfaceProcessed.getViewsBlueprint(sample_path)
 
-        if not self.use_normals_input and not self.is_eval:
+        if not self.opt.use_normal_input and not self.is_eval:
             views = viewUtils.augmentViews(views, self.opt.random_scale, self.opt.loadSize, bb)
 
-            if self.opt.use_gan_input:
-                views = viewUtils.resizeViews(views, self.opt.loadSize)
+        if self.opt.use_gan_input or self.opt.use_normal_input:
+            views = viewUtils.resizeViews(views, self.opt.loadSize)
 
-            #views = viewUtils.colorcodeViews(views)
+        if self.opt.use_gan_input:
+            views = viewUtils.colorcodeViews(views)
 
-        viewUtils.showViews(views)
+        if self.opt.use_normal_input:
+            views = viewUtils.trimViewsByBB(views, bb)
+
+        #viewUtils.showViews(views)
 
         self.bounding_box = bb
         self.views = views
 
     def get_render(self, subject, num_views):
-        '''
+        """
         Return the render data
         :param subject: subject name
         :param num_views: how many views to return
-        :param view_id: the first view_id. If None, select a random one.
         :return:
             'img': [num_views, C, W, H] images
             'calib': [num_views, 4, 4] calibration matrix
             'extrinsic': [num_views, 4, 4] extrinsic matrix
-        '''
+        """
 
         if num_views == 4:
             yaw_list = [0, 90, 90, 180]
@@ -219,6 +220,8 @@ class TrainDataset(Dataset):
         #if self.is_train and self.opt.random_flip and np.random.rand() > 0.5:
             #flip = True
 
+        scale = viewUtils.getMaxDimension(self.views)
+
         for idx, yaw in enumerate(yaw_list):
             pitch = 0
             if num_views == 4 and idx == 2:
@@ -226,8 +229,6 @@ class TrainDataset(Dataset):
 
             poseName = self.angles_to_name(yaw, pitch)
 
-            ortho_ratio = 1
-            scale = self.opt.loadSize
             center = np.array([0, 0, 0], np.float32)
             R = np.matmul(make_rotate(math.radians(pitch), 0, 0), make_rotate(0, math.radians(yaw), 0))
 
@@ -241,24 +242,27 @@ class TrainDataset(Dataset):
             scale_intrinsic[2, 2] = scale
             # Match image pixel space to image uv space
             uv_intrinsic = np.identity(4)
-            uv_intrinsic[0, 0] = 1.0 / float(self.opt.loadSize // 2)
-            uv_intrinsic[1, 1] = 1.0 / float(self.opt.loadSize // 2)
-            uv_intrinsic[2, 2] = 1.0 / float(self.opt.loadSize // 2)
+            uv_intrinsic[0, 0] = 1.0 / float(scale // 2)
+            uv_intrinsic[1, 1] = 1.0 / float(scale // 2)
+            uv_intrinsic[2, 2] = 1.0 / float(scale // 2)
             # Transform under image pixel space
             trans_intrinsic = np.identity(4)
 
-            render = Image.fromarray(self.views[poseName], mode='L')
+            render = Image.fromarray(self.views[poseName], mode='RGB' if self.opt.use_normal_input else 'L')
+
+            if self.opt.use_normal_input:
+                render = render.convert('L')
 
             if self.opt.render_normals:
                 normal = Image.fromarray(normal_views[poseName], mode='RGB')
                 normal_img_tensor = transforms.ToTensor()(normal)
-                normal_img_tensor = F.normalize(normal_img_tensor, dim=0, eps=1e-8)
+                #normal_img_tensor = F.normalize(normal_img_tensor, dim=0, eps=1e-8)
                 depth_list.append(np.expand_dims(depth_views[poseName], 0))
                 normal_list.append(normal_img_tensor)
 
             #render = render.resize((self.load_size, self.load_size), Image.BILINEAR)
 
-            if True:# (yaw == 90 and pitch == 0) or (yaw == 90 and pitch == 90):
+            if True:#(yaw == 90 and pitch == 0) or (yaw == 90 and pitch == 90):
                 render = ImageOps.mirror(render)
 
                 #if flip:
@@ -283,15 +287,16 @@ class TrainDataset(Dataset):
                     dx = 0
                     dy = 0
 
-                trans_intrinsic[0, 3] = -dx / float(self.opt.loadSize // 2)
-                trans_intrinsic[1, 3] = -dy / float(self.opt.loadSize // 2)
+                trans_intrinsic[0, 3] = -dx / float(scale // 2)
+                trans_intrinsic[1, 3] = -dy / float(scale // 2)
 
                 x1 = int(round((w - tw) / 2.)) + dx
                 y1 = int(round((h - th) / 2.)) + dy
 
                 #render = render.crop((x1, y1, x1 + tw, y1 + th))
 
-                render = self.aug_trans(render)
+                if not self.opt.use_normal_input:
+                    render = self.aug_trans(render)
 
                 # random blur
                 if self.opt.aug_blur > 0.00001:
@@ -304,6 +309,8 @@ class TrainDataset(Dataset):
 
             if not self.opt.use_gan_input:
                 render = self.to_tensor(render)
+                #plt.imshow(render.permute(1,2,0), cmap='gray')
+                #plt.show()
 
             render_list.append(render)
             calib_list.append(calib)
@@ -335,25 +342,29 @@ class TrainDataset(Dataset):
 
         normals_points = None
         normals = None
+        edges = None
 
-        if subject in self.points_dic:
-            points = self.points_dic[subject]
+        if subject in self.pertubed_points_dic:
+            points = self.pertubed_points_dic[subject]
             sdf = self.sdf_dic[subject]
 
-            if self.use_normals:
-                normals_points = self.points_normals_dic[subject]
+            if self.opt.use_normal_loss or self.opt.use_edge_loss:
+                normals_points = self.points_surface_dic[subject]
+
+            if self.opt.use_normal_loss:
                 normals = self.normals_dic[subject]
+
+            if self.opt.use_edge_loss:
+                edges = self.edges_dic[subject]
         else:
-            points, sdf, normals_points, normals = loadData(self.root, subject,  self.use_normals, self.opt.regression)
+            points, sdf, normals_points, normals, edges = loadData(self.root, subject, self.opt)
 
         #Occupany sampling
-        #Load more points than we need to we can balance them later
-        #num = 4 * self.num_sample_inout + self.num_sample_inout // 4
         num = self.num_sample_inout
 
         if self.opt.regression:
-            sdf = np.clip(sdf, -self.opt.sigma, self.opt.sigma)
-            sdf = sdf * (1/self.opt.sigma)
+            sdf = np.clip(sdf, -self.opt.reg_distance, self.opt.reg_distance)
+            sdf = sdf * (1/self.opt.reg_distance)
             sdf = -sdf * 0.5 + 0.5
             maskInside = sdf >= 0.5
             maskOutside = sdf < 0.5
@@ -373,54 +384,21 @@ class TrainDataset(Dataset):
         samples = samples.T
         labels = np.expand_dims(labels.T, 0)
 
-        #index = np.random.choice(sdf.shape[0], num, replace=False)
-        #sample_points = points[index]
-        #inside = sdf[index]
-
-        #samples = sample_points.T
-        #labels = np.expand_dims(sdf, 0)
-
         #Normal sampling
-        if self.use_normals:
+        if self.opt.use_normal_loss or self.opt.use_edge_loss:
             indexNormal = np.random.choice(normals_points.shape[0], self.num_sample_normals, replace=False)
             normals_points = normals_points[indexNormal].T
-            normals = normals[indexNormal].T
             normals_points = torch.Tensor(normals_points).float()
-            normals = torch.Tensor(normals).float()
 
+        if self.opt.use_normal_loss:
+            normals = normals[indexNormal].T
+            normals = torch.Tensor(normals).float()
             # Make sure they are normalized
             normals = F.normalize(normals, dim=0, eps=1e-8)
-            #print(normals)
-            if self.opt.debug:
-                normals_rgb = (normals + 1) * 0.5
-                save_samples_rgb('pointclouds/normals_{0}.ply'.format(subject), normals_points.T, normals_rgb.T)
 
-        if False:
-            #Balance all points to be even 33/33/33 inside, outside, on surface
-            if self.opt.sample_on_surface and self.use_normals:
-                inside_points = sample_points[inside]
-                outside_points = sample_points[np.logical_not(inside)]
-
-                nin = inside_points.shape[0]
-                inside_points = inside_points[:self.num_sample_inout // 3] if nin > self.num_sample_inout // 3 else inside_points
-                outside_points = outside_points[:self.num_sample_inout // 3] if nin > self.num_sample_inout // 3 else outside_points[:(self.num_sample_inout - nin)]
-
-                rest_count = self.num_sample_inout - len(inside_points) - len(outside_points)
-                normals_points_surface = normals_points.T[:rest_count]
-
-                samples = np.concatenate([inside_points, outside_points, normals_points_surface], 0).T
-                labels = np.concatenate([np.ones((1, inside_points.shape[0])), np.zeros((1, outside_points.shape[0])), np.full((1, normals_points_surface.shape[0]), fill_value=0.5)], 1)
-            #Balance all points to be even 50/50 outside/inside
-            else:
-                inside_points = sample_points[inside]
-                outside_points = sample_points[np.logical_not(inside)]
-
-                nin = inside_points.shape[0]
-                inside_points = inside_points[:self.num_sample_inout // 2] if nin > self.num_sample_inout // 2 else inside_points
-                outside_points = outside_points[:self.num_sample_inout // 2] if nin > self.num_sample_inout // 2 else outside_points[:(self.num_sample_inout - nin)]
-
-                samples = np.concatenate([inside_points, outside_points], 0).T
-                labels = np.concatenate([np.ones((1, inside_points.shape[0])), np.zeros((1, outside_points.shape[0]))], 1)
+        if self.opt.use_edge_loss:
+            edges = edges[indexNormal].T
+            edges = torch.Tensor(edges).float()
 
         samples = torch.Tensor(samples).float()
         labels = torch.Tensor(labels).float()
@@ -430,12 +408,12 @@ class TrainDataset(Dataset):
             'labels': labels,
             'samples_normals': normals_points,
             'normals': normals,
+            'edges': edges,
             'b_min': minBB,
             'b_max': maxBB
         }
 
     def applyGANToViews(self, render_data):
-
         new_views = []
         #back,side,top,front
         for idx, view in enumerate(render_data['img']):
@@ -447,11 +425,11 @@ class TrainDataset(Dataset):
                 self.gan_model.real_A = A
                 self.gan_model.forward()
 
-            img = self.gan_model.fake_B.cpu().numpy()[0,:,:,:]
-            img = np.transpose(img, [1,2,0])
+            img = self.gan_model.fake_B.cpu().numpy()[0, :, :, :]
+            img = np.transpose(img, [1, 2, 0])
             new_views.append(img)
 
-        views_dict = {'back':new_views[0], 'side': new_views[1], 'top': new_views[2], 'front':new_views[3]}
+        views_dict = {'back': new_views[0], 'side': new_views[1], 'top': new_views[2], 'front': new_views[3]}
         #new_views = views_dict
         new_views = viewUtils.trimViewsByBB(views_dict, self.bounding_box)
         #viewUtils.showViews(new_views)

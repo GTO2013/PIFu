@@ -55,9 +55,14 @@ class BaseOptions():
         # Sampling related
         g_sample = parser.add_argument_group('Sampling')
         g_sample.add_argument('--sigma', type=float, default=.005, help='perturbation standard deviation for positions')
+        g_sample.add_argument('--reg_distance', type=float, default=.005, help='regression distance threshold')
 
         g_sample.add_argument('--sample_on_surface', default=False, action='store_true', help='Sample on surface for occ')
         g_sample.add_argument('--use_normal_loss', default=False, action='store_true', help='Use normal loss or not')
+        g_sample.add_argument('--use_edge_loss', default=False, action='store_true', help='Use edge loss or not')
+        g_sample.add_argument('--occ_loss_weight', type=float, default=1, help='occ loss weight')
+        g_sample.add_argument('--normal_loss_weight', type=float, default=0.5, help='normal loss weight')
+        g_sample.add_argument('--edge_loss_weight', type=float, default=0.25, help='edge loss weight')
         g_sample.add_argument('--num_sample_normals', type=int, default=5000, help='# of sampling points')
         g_sample.add_argument('--num_sample_inout', type=int, default=5000, help='# of sampling points')
         g_sample.add_argument('--num_sample_color', type=int, default=0, help='# of sampling points')
@@ -73,6 +78,7 @@ class BaseOptions():
         g_model.add_argument('--use_unet', action='store_true', help='Use a unet instead')
         g_model.add_argument('--use_gan_input', action='store_true', help='Use the input of the GAN')
         g_model.add_argument('--gan_epoch', type=int, default=135, help='GAN Epoch to be used')
+
         g_model.add_argument('--num_stack', type=int, default=2, help='# of hourglass')
         #g_model.add_argument('--num_stack', type=int, default=4, help='# of hourglass')
         g_model.add_argument('--num_hourglass', type=int, default=2, help='# of stacked layer of hourglass') #3 before
@@ -111,6 +117,7 @@ class BaseOptions():
         parser.add_argument('--num_gen_mesh_test', type=int, default=1, help='how many meshes to generate during testing')
 
         # path
+        parser.add_argument('--decoder_base', type=str, default='', help='path to load a pretrained decoder')
         parser.add_argument('--checkpoints_path', type=str, default='./trainedModels', help='path to save checkpoints')
         parser.add_argument('--load_netG_checkpoint_path', type=str, default=None, help='path to save checkpoints')
         parser.add_argument('--load_netC_checkpoint_path', type=str, default=None, help='path to save checkpoints')
@@ -175,13 +182,15 @@ class BaseOptions():
         filter_hg = str(opt.hourglass_dim)
         sample_count = str(opt.num_sample_inout)
         nml_loss = "nml_loss" if opt.use_normal_loss else ""
+        edge_loss = 'edge_loss' if opt.use_edge_loss else ""
         skip_ds = "sds" if opt.skip_downsample else ""
         super_res = "superRes" if opt.super_res else ""
         unet = "unet" if opt.use_unet else "hg"
         mlp_type = opt.mlp_type
         mlp_sizes = '_'.join(str(x) for x in opt.mlp_dim)
 
-        return '_'.join(str(x) for x in [baseName, type_name, unet, input_type, super_res, filter_hg, sample_count, nml_loss, skip_ds, mlp_type])
+        return '_'.join(str(x) for x in [baseName, type_name, unet, input_type, super_res, filter_hg, sample_count,
+                                         nml_loss, edge_loss, skip_ds, mlp_type])
 
     def saveOptToFile(self, opt):
         savePath = '%s/%s/options.txt' % (opt.checkpoints_path, opt.name)
@@ -196,7 +205,7 @@ class BaseOptions():
         if os.path.exists(loadPath):
             parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
             parser = self.initialize(parser)
-            opt = parser.parse_args()
+            opt = parser.parse_args("")
 
             with open(loadPath, 'r') as f:
                 opt.__dict__ = json.load(f)

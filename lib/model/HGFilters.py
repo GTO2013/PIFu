@@ -58,20 +58,25 @@ class HourGlass(nn.Module):
 
 
 class HGFilter(nn.Module):
-    def __init__(self, opt):
+    def __init__(self, opt, input_channels = 1):
         super(HGFilter, self).__init__()
         self.num_modules = opt.num_stack
-
         self.opt = opt
 
         # Base part
         #self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=1 if self.opt.skip_downsample else 2, padding=3)
-        self.conv1 = nn.Conv2d(4 if opt.use_gan_input else 1, 64, kernel_size=7, stride=1 if self.opt.skip_downsample else 2, padding=3)
+        #if input_channels == 1 and (opt.use_normal_input or opt.use_gan_input):
+        #    input_channels = 3
+
+        first_filters = max(input_channels, 64)
+        if first_filters == 131:
+            first_filters = 128
+        self.conv1 = nn.Conv2d(input_channels, first_filters, kernel_size=7, stride=1 if self.opt.skip_downsample else 2, padding=3)
 
         if self.opt.norm == 'batch':
-            self.bn1 = nn.BatchNorm2d(64) # 64 before
+            self.bn1 = nn.BatchNorm2d(first_filters) # 64 before
         elif self.opt.norm == 'group':
-            self.bn1 = nn.GroupNorm(32, 64)
+            self.bn1 = nn.GroupNorm(first_filters//2, first_filters)
 
         if False and not self.opt.skip_downsample:
             if self.opt.hg_down == 'conv64':
@@ -85,11 +90,11 @@ class HGFilter(nn.Module):
             else:
                 raise NameError('Unknown Fan Filter setting!')
 
-        dim = 64 #64 before
-        groupNormSize = 16 #32 Before
+        #dim = first_filters #64 before
+        groupNormSize = first_filters//4 #16 #32 Before
 
-        self.conv3 = ConvBlock(dim, 64, self.opt.norm, groupNormSize)
-        self.conv4 = ConvBlock(64, self.opt.hourglass_dim_internal, self.opt.norm, groupNormSize)
+        self.conv3 = ConvBlock(first_filters, first_filters, self.opt.norm, groupNormSize)
+        self.conv4 = ConvBlock(first_filters, self.opt.hourglass_dim_internal, self.opt.norm, groupNormSize)
 
         # Stacking part
         for hg_module in range(self.num_modules):
@@ -150,8 +155,11 @@ class HGFilter(nn.Module):
                         (self._modules['conv_last' + str(i)](ll)), True)
 
             # Predict heatmaps
-            #self._modules['l' + str(i)](ll)
-            tmp_out = checkpoint.checkpoint(self._modules['l' + str(i)], ll)
+            if ll.requires_grad:
+                tmp_out = checkpoint.checkpoint(self._modules['l' + str(i)], ll)
+            else:
+                tmp_out = self._modules['l' + str(i)](ll)
+
             #outputs.append(tmp_out)
 
             if i < self.num_modules - 1:

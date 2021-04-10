@@ -1,5 +1,6 @@
 import numpy as np
-
+import torch
+import time
 
 def create_grid(resX, resY, resZ, b_min=np.array([0, 0, 0]), b_max=np.array([1, 1, 1]), transform=None):
     '''
@@ -38,9 +39,9 @@ def batch_eval_normal(features, points, eval_func, num_samples=512 * 512 * 512):
 
     return sdf
 
-def batch_eval(features, points, eval_func, num_samples=512 * 512 * 512):
+def batch_eval(cuda, features, points, eval_func, num_samples=512 * 512 * 512):
     num_pts = points.shape[1]
-    sdf = np.zeros(num_pts)
+    sdf = torch.zeros(num_pts, device=cuda)
     num_batches = num_pts // num_samples
     for i in range(num_batches):
         sdf[i * num_samples:i * num_samples + num_samples] = eval_func(features, points[:, i * num_samples:i * num_samples + num_samples])
@@ -57,11 +58,10 @@ def eval_grid(features, coords, eval_func, num_samples=512 * 512 * 512):
     return sdf.reshape(resolution)
 
 
-def eval_grid_octree(features, coords, eval_func,
+def eval_grid_octree(cuda, features, coords, eval_func,
                      init_resolution=64, threshold=0.01,
                      num_samples=512 * 512 * 512):
     resolution = coords.shape[1:4]
-
     sdf = np.zeros(resolution)
 
     dirty = np.ones(resolution, dtype=np.bool)
@@ -76,8 +76,10 @@ def eval_grid_octree(features, coords, eval_func,
         test_mask = np.logical_and(grid_mask, dirty)
         #print('step size:', reso, 'test sample size:', test_mask.sum())
         points = coords[:, test_mask]
-
-        sdf[test_mask] = batch_eval(features, points, eval_func, num_samples=num_samples)
+        time_now = time.perf_counter()
+        sdf[test_mask] = batch_eval(cuda, features, points, eval_func, num_samples=num_samples).detach().cpu().numpy()
+        print("SDF Query Time: {0}".format(time.perf_counter() - time_now))
+        time_now = time.perf_counter()
         dirty[test_mask] = False
 
         # do interpolation
@@ -100,10 +102,13 @@ def eval_grid_octree(features, coords, eval_func,
                     v = np.array([v0, v1, v2, v3, v4, v5, v6, v7])
                     v_min = v.min()
                     v_max = v.max()
+                    #print(x,y,z)
                     # this cell is all the same
                     if (v_max - v_min) < threshold:
+
                         sdf[x:x + reso, y:y + reso, z:z + reso] = (v_max + v_min) / 2
                         dirty[x:x + reso, y:y + reso, z:z + reso] = False
         reso //= 2
+        print("Octree Time: {0}".format(time.perf_counter() - time_now))
 
     return sdf.reshape(resolution)

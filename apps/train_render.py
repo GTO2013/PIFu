@@ -61,8 +61,9 @@ def train(opt):
     # create net
     print("Num GPUs: " + str(torch.cuda.device_count()))
 
-    name = "multiview_pifu_OCC_hg_bp_64_5000_nml_loss_sds_mlp"
+    name = "multiview_pifu_OCC_hg_bp__256_15000_nml_loss_edge_loss__mlp"
     model_opt = BaseOptions().loadOptFromFile(name= name)
+    model_opt.use_edge_loss = False
 
     if len(device_ids) > 1:
         netG = MyDataParallel(HGPIFuNet(model_opt, train_dataset.projection_mode), device_ids=device_ids).to(device=cuda)
@@ -105,7 +106,7 @@ def train(opt):
             train_data = move_to_gpu(train_data, cuda)
             image_idx = 0
 
-            #features = netG.filter(train_data['images'])
+            features = netG.filter(train_data['images'])
             sampled_points = 0
             num_points = 50000
             points = train_data['samples_depth'][image_idx]
@@ -115,33 +116,42 @@ def train(opt):
             while False and sampled_points < total_points:
                 num_points = min(num_points, total_points - sampled_points)
                 slice = points[:,:,sampled_points:num_points+sampled_points]
-                #netG.query(slice, train_data['calib'], train_data['size'])
-                #pred = netG.get_preds()
-                #new_nmls = torch.autograd.grad(outputs=pred, inputs=[slice[0:1,:,:]], grad_outputs=torch.ones_like(slice[0:1,:,:]),create_graph=True, retain_graph=True)
+                pred = netG.query(slice, train_data['calib'], train_data['size'])
+                new_nmls = torch.autograd.grad(outputs=pred, inputs=[slice[0:1,:,:]], grad_outputs=torch.ones_like(slice[0:1,:,:]),create_graph=True, retain_graph=True)
                 #new_nmls = netG.forward(reshape_sample_tensor(slice, opt.num_views), train_data['calib'],train_data['size'], fd_type='forward')
                 points_query = reshape_sample_tensor(slice, opt.num_views)
-                new_nmls = netG.calc_normal(features, points_query, train_data['calib'], train_data['size'], fd_type='forward')
+
+                #new_nmls, _ = netG.calc_normal_edges(features, points_query, train_data['calib'], train_data['size'], fd_type='central')
                 current_normals_list.append(new_nmls[image_idx::opt.num_views, :, :])
                 sampled_points += num_points
 
-            #points_query = reshape_sample_tensor(points, opt.num_views)
             points_query = reshape_sample_tensor(points, opt.num_views)
 
             gt_normals_img = train_data['normal_images'][image_idx].to(dtype=torch.float32)
             gt_normals_img_mask = (gt_normals_img > 0).to(dtype=torch.float32)
 
-            sdf, normals, errorPred = netG.forward(train_data['images'], train_data['samples'], train_data['calib'], train_data['size'],
-                                                labels=train_data['labels'], points_nml=points_query, labels_nml=None)
+            sdf = netG.calc_pred(features, points_query, train_data['calib'], train_data['size'])
 
+            _, normals, _, errorPred = netG.forward(train_data['images'], train_data['samples'], train_data['calib'], train_data['size'],
+                                                   labels=train_data['labels'], points_surface=points_query, labels_nml=None)
+
+            #normals = torch.autograd.grad(outputs=train_data['samples'], inputs=sdf,
+            #                               grad_outputs=torch.ones_like(train_data['samples']), create_graph=True,
+            #                               retain_graph=True)
 
             img_orig_shape = train_data['normal_images'][image_idx].shape
-            pred_normals_img = torch.reshape(normals, (-1, 3, img_orig_shape[2], img_orig_shape[3]))
-            pred_normals_img = pred_normals_img * 0.5 + 0.5
-            pred_normals_img = F.normalize(pred_normals_img, dim=1, eps=1e-8)
+            pred_normals_img = torch.reshape(sdf, (-1, 1, img_orig_shape[2], img_orig_shape[3]))
+            pred_normals_img = gt_normals_img - (pred_normals_img-0.5)
+
+            #pred_normals_img = torch.reshape(normals, (-1, 3, img_orig_shape[2], img_orig_shape[3]))
+            #pred_normals_img = F.normalize(pred_normals_img, dim=1, eps=1e-8)
+            #print(torch.min(pred_normals_img), torch.max(pred_normals_img))
+            #pred_normals_img = (pred_normals_img + 1) * 0.5
             pred_normals_img *= gt_normals_img_mask
 
             #plt.imshow(gt_normals_img[0].detach().cpu().numpy().transpose(1,2,0))
             #plt.show()
+            #preview = 0.5 - pred_normals_img[0].detach().cpu().numpy().transpose(1,2,0)
             preview = np.concatenate([pred_normals_img[0].detach().cpu().numpy().transpose(1,2,0), gt_normals_img[0].detach().cpu().numpy().transpose(1,2,0)], axis=1)
             cv2.imshow("prediction", preview)
             cv2.waitKey(1)
@@ -149,9 +159,10 @@ def train(opt):
             #plt.show()
 
             #mse = torch.nn.MSELoss()
+            error = 0
             #error = mse(pred_normals_img, gt_normals_img) + errorPred['Err(cmb)'].mean()
 
-            error = vgg_loss(pred_normals_img, gt_normals_img) + errorPred['Err(cmb)'].mean()*2
+            error = vgg_loss(pred_normals_img, gt_normals_img) + errorPred['Err(cmb)'].mean()*10
             scaler.scale(error.mean()).backward()
             scaler.step(optimizerG)
             scaler.update()

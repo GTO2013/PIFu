@@ -113,7 +113,7 @@ def train(opt):
 
             train_data = move_to_gpu(train_data, cuda)
             res, nmls, error = netG.forward(train_data['images'], train_data['samples'], train_data['calib'], imgSizes=train_data['size'],
-                                            labels=train_data['labels'], points_nml=train_data['samples_normals'], labels_nml=train_data['normals'])
+                                            labels=train_data['labels'], points_surface=train_data['samples_normals'], labels_nml=train_data['normals'])
 
             error['Err(nml)'].mean().backward()
             #scaler.scale(error['Err(nml)'].mean()).backward()

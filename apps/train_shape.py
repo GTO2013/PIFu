@@ -89,6 +89,18 @@ def train(opt):
         print('Resuming from ', model_path)
         netG.load_state_dict(torch.load(model_path, map_location=cuda))
 
+    if opt.decoder_base != "":
+        model_opt = BaseOptions().loadOptFromFile(name= opt.decoder_base)
+        model_with_decoder = HGPIFuNet(model_opt, train_dataset.projection_mode).to(device=cuda)
+        model_path = '%s/%s/netG_latest' % (opt.checkpoints_path, opt.decoder_base)
+        model_with_decoder.load_state_dict(torch.load(model_path, map_location=cuda))
+        netG.surface_classifier = model_with_decoder.surface_classifier
+
+        for param in netG.surface_classifier.parameters():
+            param.requires_grad = False
+
+        print("Loaded decoder from {0} and froze parameters...".format(opt.decoder_base))
+
     os.makedirs(opt.checkpoints_path, exist_ok=True)
     os.makedirs(opt.results_path, exist_ok=True)
     os.makedirs('%s/%s' % (opt.checkpoints_path, opt.name), exist_ok=True)
@@ -110,8 +122,10 @@ def train(opt):
             iter_start_time = time.time()
 
             train_data = move_to_gpu(train_data, cuda)
-            res, nmls, error = netG.forward(train_data['images'], train_data['samples'], train_data['calib'], imgSizes=train_data['size'],
-                                            labels=train_data['labels'], points_nml=train_data['samples_normals'], labels_nml=train_data['normals'])
+            pred, nmls, _, error = netG.forward(train_data['images'], train_data['samples'], train_data['calib'],
+                                            imgSizes=train_data['size'], labels=train_data['labels'],
+                                            points_surface=train_data['samples_normals'],
+                                            labels_nml=train_data['normals'], labels_edges=train_data['edges'])
 
             scaler.scale(error['Err(cmb)'].mean()).backward()
             scaler.step(optimizerG)
@@ -128,11 +142,15 @@ def train(opt):
 
             if train_idx % opt.freq_plot == 0:
                 normal_loss = 0
+                edge_loss = 0
+
                 if opt.use_normal_loss:
                     normal_loss = error['Err(nml)'].mean().item()
+                if opt.use_edge_loss:
+                    edge_loss = error['Err(edges)'].mean().item();
                 print(
-                    'Name: {0} | Epoch: {1} | {2}/{3} | Err (Cmb): {4:.06f} | Err(Occ): {5:.06f} |  Err(Nml): {6:.06f} | LR: {7:.06f} | dataT: {8:.05f} | netT: {9:.05f} | ETA: {10:02d}:{11:02d}'.format(
-                        opt.name, epoch, train_idx, len(train_data_loader), error['Err(cmb)'].mean().item(), error['Err(occ)'].mean().item(), normal_loss, lr, iter_start_time - iter_data_time, iter_net_time - iter_start_time, int(eta // 60),int(eta - 60 * (eta // 60))))
+                    'Name: {0} | Epoch: {1} | {2}/{3} | Err (Cmb): {4:.06f} | Err(Occ): {5:.06f} |  Err(Nml): {6:.06f} | Err(edges): {7:.06f} | LR: {8:.06f} | dataT: {9:.05f} | netT: {10:.05f} | ETA: {11:02d}:{12:02d}'.format(
+                        opt.name, epoch, train_idx, len(train_data_loader), error['Err(cmb)'].mean().item(), error['Err(occ)'].mean().item(), normal_loss, edge_loss, lr, iter_start_time - iter_data_time, iter_net_time - iter_start_time, int(eta // 60),int(eta - 60 * (eta // 60))))
 
             if not opt.debug and train_idx % opt.freq_save == 0 and train_idx != 0:
                 torch.save(netG.state_dict(), '%s/%s/netG_latest' % (opt.checkpoints_path, opt.name))
@@ -140,9 +158,18 @@ def train(opt):
 
             if train_idx % opt.freq_save_ply == 0:
                 save_path = '%s/%s/pred.ply' % (opt.results_path, opt.name)
-                r = res[0].cpu()
+                r = pred[0].cpu()
                 points = train_data['samples'][0].transpose(0, 1).cpu()
                 save_samples_truncted_prob(save_path, points.detach().numpy(), r.detach().numpy())
+
+                nml_source = pred[0] if opt.predict_normal else nmls[0]
+                gt_labels_rgb = (train_data['normals'][0].cpu().detach().numpy() + 1) * 0.5
+                pred_labels_rgb = (nml_source.cpu().detach().numpy() + 1) * 0.5
+
+                save_samples_rgb('%s/%s/normals_gt.ply',
+                                 train_data['samples_normals'][0].cpu().detach().numpy().T, gt_labels_rgb.T)
+                save_samples_rgb('%s/%s/normals_pred.ply',
+                                 train_data['samples_normals'][0].cpu().detach().numpy().T, pred_labels_rgb.T)
 
             iter_data_time = time.time()
 
@@ -161,9 +188,11 @@ def train(opt):
                 test_losses = {}
                 print('calc error (test) ...')
                 test_errors = calc_error(coll, netG, cuda, test_dataset, 100)
-                print('eval test MSE: {0:06f} IOU: {1:06f} prec: {2:06f} recall: {3:06f}'.format(*test_errors))
-                MSE, IOU, prec, recall = test_errors
-                test_losses['MSE(test)'] = MSE
+                print('eval test OCC: {0:06f} NML: {1:06f} EDGES: {2:06f} IOU: {3:06f} prec: {4:06f} recall: {5:06f}'.format(*test_errors))
+                occ, nml, edges, IOU, prec, recall = test_errors
+                test_losses['OCC(test)'] = occ
+                test_losses['NML(test)'] = nml
+                test_losses['EDGES(test'] = edges
                 test_losses['IOU(test)'] = IOU
                 test_losses['prec(test)'] = prec
                 test_losses['recall(test)'] = recall
@@ -172,9 +201,11 @@ def train(opt):
                 train_dataset.is_train = False
                 train_errors = calc_error(coll,netG, cuda, train_dataset, 100)
                 train_dataset.is_train = True
-                print('eval train MSE: {0:06f} IOU: {1:06f} prec: {2:06f} recall: {3:06f}'.format(*train_errors))
-                MSE, IOU, prec, recall = train_errors
-                test_losses['MSE(train)'] = MSE
+                print('eval train OCC: {0:06f} NML: {1:06f} EDGES: {2:06f} IOU: {3:06f} prec: {4:06f} recall: {5:06f}'.format(*train_errors))
+                occ, nml, edges, IOU, prec, recall = train_errors
+                test_losses['OCC(train)'] = occ
+                test_losses['NML(train)'] = nml
+                test_losses['EDGES(train'] = edges
                 test_losses['IOU(train)'] = IOU
                 test_losses['prec(train)'] = prec
                 test_losses['recall(train)'] = recall

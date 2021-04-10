@@ -7,14 +7,14 @@ from src.utils import pointcloudUtils
 from PIL import Image
 import trimesh
 
+def make_divisible(x, div):
+    return int(((x // div) + 1) * div)
+
 class MultiViewCollator(object):
     def __init__(self, opt):
         self.opt = opt
     def __call__(self, batches):
         return self.prepareBatches(batches, self.opt)
-
-    def make_divisible(self, x, div):
-        return int(((x // div) + 1) * div)
 
     def adjustImageSizesInBatch(self, batches, div=16, key = 'img', black=False):
         numBatches = len(batches)
@@ -37,10 +37,10 @@ class MultiViewCollator(object):
             newHeight = maxHeight
 
             if newWidth % div != 0:
-                newWidth = self.make_divisible(newWidth, div)
+                newWidth = make_divisible(newWidth, div)
 
             if newHeight % div != 0:
-                newHeight = self.make_divisible(newHeight, div)
+                newHeight = make_divisible(newHeight, div)
 
             list_img = []
             for j in range(numBatches):
@@ -71,12 +71,13 @@ class MultiViewCollator(object):
         depth_samples = []
         sizes = []
 
-        div = 16
+        div = 2**(opt.num_hourglass+1)
 
         if 'img_nml' in batches[0] and batches[0]['img_nml'] is not None:
             for img in self.adjustImageSizesInBatch(batches, div=div, key='img_nml'):
                 normal_image_list.append(torch.Tensor(img))
 
+        #Used for testing rendering as loss
         if 'img_depth' in batches[0] and batches[0]['img_depth'] is not None:
             for viewIdx, img in enumerate(self.adjustImageSizesInBatch(batches, div=div, key='img_depth', black=True)):
                 current = []
@@ -102,22 +103,36 @@ class MultiViewCollator(object):
 
                 depth_samples.append(torch.Tensor(np.concatenate(current)))
 
+
         #Pad images to be the same across batches and be divisible by factor x so convolution doesnt fail
-        for img in self.adjustImageSizesInBatch(batches, div=div):
+        adjusted_imgs = self.adjustImageSizesInBatch(batches, div=div)
+
+        #If loadSize is -1, train with different image sizes
+        #So we need to figure out the max dimension dynamically instead
+        #Only works with batchsize 1
+        max_size = opt.loadSize
+        if max_size == -1:
+            for img in batches[0]['img']:
+                if img.shape[2] > max_size:
+                    max_size = img.shape[2]
+
+        for img in adjusted_imgs:
             img = torch.Tensor(img)
             image_tensor_list.append(img)
-            size = torch.Tensor([opt.loadSize / img.shape[3], opt.loadSize / img.shape[2]])
+            size = torch.Tensor([max_size / img.shape[3], max_size / img.shape[2]])
             sizes.append(size)
 
+        #Prepare output dict
         train_data = {'bounding_boxes': [], 'images': image_tensor_list,
                       'normal_images': normal_image_list,
                       'samples_depth': depth_samples,
                       'calib': [],
                       'samples': [], 'labels': [],
-                      'samples_normals': [], 'size': [], 'normals': []}
+                      'samples_normals': [], 'size': [], 'normals': [], 'edges': []}
 
+        #Iterate through all batches and fill train_data
         for batch in batches:
-            train_data['bounding_boxes'].append({'b_min': batch['b_min'],'b_max':batch['b_max']})
+            train_data['bounding_boxes'].append({'b_min': batch['b_min'], 'b_max':batch['b_max']})
             train_data['calib'].append(batch['calib'].unsqueeze(0))
 
             if batch['samples'] is not None:
@@ -136,6 +151,11 @@ class MultiViewCollator(object):
             else:
                 train_data['normals'] = None
 
+            if batch['edges'] != None:
+                train_data['edges'].append(batch['edges'].unsqueeze(0))
+            else:
+                train_data['edges'] = None
+
         train_data['calib'] = torch.cat(train_data['calib'], dim=0)
         train_data['size'] = torch.stack(sizes, dim=0).repeat(len(train_data['calib']), 1)
 
@@ -148,24 +168,28 @@ class MultiViewCollator(object):
         if train_data['samples_normals'] != None:
             train_data['samples_normals'] = torch.cat(train_data['samples_normals'], dim=0)
 
-            if opt.num_views > 1:
-               train_data['samples_normals'] = reshape_sample_tensor(train_data['samples_normals'], opt.num_views)
+            #if opt.num_views > 1:
+            #   train_data['samples_normals'] = reshape_sample_tensor(train_data['samples_normals'], opt.num_views)
 
         if train_data['normals'] != None:
             train_data['normals'] = torch.cat(train_data['normals'], dim=0)
 
+        if train_data['edges'] != None:
+            train_data['edges'] = torch.cat(train_data['edges'], dim=0)
+
         train_data['calib'] = reshape_multiview_calib_tensor(train_data['calib'])
 
-        if opt.num_views > 1 and train_data['samples'] != []:
-            train_data['samples'] = reshape_sample_tensor(train_data['samples'], opt.num_views)
+        #if opt.num_views > 1 and train_data['samples'] != []:
+        #    train_data['samples'] = reshape_sample_tensor(train_data['samples'], opt.num_views)
 
         return train_data
 
+#Moves all train_data to gpu
 def move_to_gpu(train_data, cuda):
     for key in train_data:
         if key == 'images' or key == "normal_images" or key == "samples_depth":
             for idx, img in enumerate(train_data[key]):
-                dtype = torch.float32 if key =='samples_depth' else torch.float16
+                dtype = torch.float32 if (key =='samples_depth' or cuda.type == 'cpu') else torch.float16
                 train_data[key][idx] = img.to(device=cuda, dtype=dtype)
         elif key == 'bounding_boxes':
             pass
